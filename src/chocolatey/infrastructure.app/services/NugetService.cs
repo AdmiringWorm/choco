@@ -803,11 +803,11 @@ Please see https://docs.chocolatey.org/en-us/troubleshooting for more
                     log: _nugetLogger
                 );
 
-                if (!ValidateLocalDependencies(sourcePackageDependencyInfos, localPackagesDependencyInfos, packageResultsToReturn))
+                if (!config.IgnoreDependencies && !ValidateLocalDependencies(sourcePackageDependencyInfos, localPackagesDependencyInfos, packageResultsToReturn))
                 {
                     if (config.Features.StopOnFirstPackageFailure)
                     {
-                        throw new ApplicationException("Stoping due to missing dependencies.");
+                        throw new ApplicationException("Stopping due to issues with local dependencies.");
                     }
                     else
                     {
@@ -1071,45 +1071,81 @@ Please see https://docs.chocolatey.org/en-us/troubleshooting for more
             return packageResultsToReturn;
         }
 
-        private bool ValidateLocalDependencies(HashSet<SourcePackageDependencyInfo> sourcePackageDependencyInfos, IEnumerable<SourcePackageDependencyInfo> localPackagesDependencyInfos, ConcurrentDictionary<string, PackageResult> packageResultsToReturn)
+        private bool ValidateLocalDependencies(
+    HashSet<SourcePackageDependencyInfo> sourcePackageDependencyInfos,
+    IEnumerable<SourcePackageDependencyInfo> localPackagesDependencyInfos,
+    ConcurrentDictionary<string, PackageResult> packageResultsToReturn)
         {
-            var sources = new HashSet<string>(sourcePackageDependencyInfos.Select(spdi => spdi.Id), StringComparer.OrdinalIgnoreCase);
+            var sources = sourcePackageDependencyInfos
+                .GroupBy(spdi => spdi.Id, StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
 
             var validationFailed = false;
 
             foreach (var package in localPackagesDependencyInfos)
             {
+                var failedConstraints = new List<string>();
                 var missingDependencies = new List<string>();
-
                 PackageResult result;
 
-                foreach (var dependency in package.Dependencies.Where(dep => !sources.Contains(dep.Id)))
+                foreach (var dependency in package.Dependencies)
                 {
-                    var logMessage = $"Required dependency '{dependency.Id}' was not found locally or among the packages being installed.";
+                    if (!sources.TryGetValue(dependency.Id, out var found))
+                    {
+                        var message = $"Required dependency '{dependency.Id}' was not found locally or among the packages being installed.";
+                        this.Log().Error($"{package.Id} - {message}");
 
+                        var localPath = package.DownloadUri?.LocalPath;
+                        result = packageResultsToReturn.GetOrAdd(
+                            package.Id,
+                            new PackageResult(package.Id, package.Version.ToFullStringChecked(), localPath));
 
-                    this.Log().Error("{0} - {1}", package.Id, logMessage);
-                    
-                    var localPath = package.DownloadUri?.LocalPath;
-                    
-                    result = packageResultsToReturn.GetOrAdd(
-                        package.Id,
-                        new PackageResult(package.Id, package.Version.ToFullStringChecked(), localPath));
-                    result.Messages.Add(new ResultMessage(ResultType.Error, logMessage));
-                    missingDependencies.Add(dependency.Id);
+                        result.Messages.Add(new ResultMessage(ResultType.Error, message));
+                        missingDependencies.Add(dependency.Id);
+                        continue;
+                    }
+
+                    // Check if the found version satisfies the requested range
+                    if (!dependency.VersionRange.Satisfies(found.Version))
+                    {
+                        var message = $"Version constraint not satisfied for '{dependency.Id}'. Required: {dependency.VersionRange.PrettyPrint()}, but found: {found.Version.ToFullStringChecked()}.";
+
+                        this.Log().Error($"{package.Id} - {message}");
+
+                        var localPath = package.DownloadUri?.LocalPath;
+                        result = packageResultsToReturn.GetOrAdd(
+                            package.Id,
+                            new PackageResult(package.Id, package.Version.ToFullStringChecked(), localPath));
+
+                        result.Messages.Add(new ResultMessage(ResultType.Error, message));
+                        failedConstraints.Add(dependency.Id);
+                    }
                 }
 
-                if (missingDependencies.Count > 0 && packageResultsToReturn.TryGetValue(package.Id, out result))
+                if ((missingDependencies.Count > 0 || failedConstraints.Count > 0)
+                    && packageResultsToReturn.TryGetValue(package.Id, out result))
                 {
                     validationFailed = true;
 
-                    var suggestionMessage = $"Install the missing packages using: choco install {string.Join(" ", missingDependencies)}";
-                    result.Messages.Add(new ResultMessage(ResultType.Suggestion, suggestionMessage));
+                    if (missingDependencies.Count > 0)
+                    {
+                        result.Messages.Add(new ResultMessage(
+                            ResultType.Suggestion,
+                            $"Install the missing packages using: choco install {string.Join(" ", missingDependencies)}"));
+                    }
+
+                    if (failedConstraints.Count > 0)
+                    {
+                        result.Messages.Add(new ResultMessage(
+                            ResultType.Suggestion,
+                            $"Upgrade to compatible versions using: choco upgrade {string.Join(" ", failedConstraints)}"));
+                    }
                 }
             }
 
             return !validationFailed;
         }
+
 
         protected virtual string GetDependencyResolutionErrorMessage(NuGetResolverConstraintException exception)
         {
