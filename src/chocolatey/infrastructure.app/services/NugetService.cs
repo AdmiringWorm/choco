@@ -50,6 +50,7 @@ using NuGet.Protocol.Core.Types;
 using NuGet.Resolver;
 using NuGet.Versioning;
 using static chocolatey.StringResources;
+using chocolatey.infrastructure.configuration;
 
 namespace chocolatey.infrastructure.app.services
 {
@@ -802,6 +803,18 @@ Please see https://docs.chocolatey.org/en-us/troubleshooting for more
                     log: _nugetLogger
                 );
 
+                if (!ValidateLocalDependencies(sourcePackageDependencyInfos, localPackagesDependencyInfos, packageResultsToReturn))
+                {
+                    if (config.Features.StopOnFirstPackageFailure)
+                    {
+                        throw new ApplicationException("Stoping due to missing dependencies.");
+                    }
+                    else
+                    {
+                        this.Log().Warn("Issues with local dependencies found.");
+                    }
+                }
+
                 IEnumerable<SourcePackageDependencyInfo> resolvedPackages = new List<SourcePackageDependencyInfo>();
                 if (config.IgnoreDependencies)
                 {
@@ -1056,6 +1069,46 @@ Please see https://docs.chocolatey.org/en-us/troubleshooting for more
             config.RevertChanges(removeBackup: true);
 
             return packageResultsToReturn;
+        }
+
+        private bool ValidateLocalDependencies(HashSet<SourcePackageDependencyInfo> sourcePackageDependencyInfos, IEnumerable<SourcePackageDependencyInfo> localPackagesDependencyInfos, ConcurrentDictionary<string, PackageResult> packageResultsToReturn)
+        {
+            var sources = new HashSet<string>(sourcePackageDependencyInfos.Select(spdi => spdi.Id), StringComparer.OrdinalIgnoreCase);
+
+            var validationFailed = false;
+
+            foreach (var package in localPackagesDependencyInfos)
+            {
+                var missingDependencies = new List<string>();
+
+                PackageResult result;
+
+                foreach (var dependency in package.Dependencies.Where(dep => !sources.Contains(dep.Id)))
+                {
+                    var logMessage = $"Required dependency '{dependency.Id}' was not found locally or among the packages being installed.";
+
+
+                    this.Log().Error("{0} - {1}", package.Id, logMessage);
+                    
+                    var localPath = package.DownloadUri?.LocalPath;
+                    
+                    result = packageResultsToReturn.GetOrAdd(
+                        package.Id,
+                        new PackageResult(package.Id, package.Version.ToFullStringChecked(), localPath));
+                    result.Messages.Add(new ResultMessage(ResultType.Error, logMessage));
+                    missingDependencies.Add(dependency.Id);
+                }
+
+                if (missingDependencies.Count > 0 && packageResultsToReturn.TryGetValue(package.Id, out result))
+                {
+                    validationFailed = true;
+
+                    var suggestionMessage = $"Install the missing packages using: choco install {string.Join(" ", missingDependencies)}";
+                    result.Messages.Add(new ResultMessage(ResultType.Suggestion, suggestionMessage));
+                }
+            }
+
+            return !validationFailed;
         }
 
         protected virtual string GetDependencyResolutionErrorMessage(NuGetResolverConstraintException exception)
