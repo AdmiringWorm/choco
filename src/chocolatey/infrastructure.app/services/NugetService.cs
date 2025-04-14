@@ -1076,6 +1076,11 @@ Please see https://docs.chocolatey.org/en-us/troubleshooting for more
     IEnumerable<SourcePackageDependencyInfo> localPackagesDependencyInfos,
     ConcurrentDictionary<string, PackageResult> packageResultsToReturn)
         {
+            bool IsInstalled(string packageId)
+            {
+                return localPackagesDependencyInfos.Any(p => p.Id.Equals(packageId, StringComparison.OrdinalIgnoreCase));
+            }
+
             var sources = sourcePackageDependencyInfos
                 .GroupBy(spdi => spdi.Id, StringComparer.OrdinalIgnoreCase)
                 .ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
@@ -1084,8 +1089,7 @@ Please see https://docs.chocolatey.org/en-us/troubleshooting for more
 
             foreach (var package in localPackagesDependencyInfos)
             {
-                var failedConstraints = new List<string>();
-                var missingDependencies = new List<string>();
+                var missingDependencies = new List<(string Id, VersionRange VersionRange)>();
                 PackageResult result;
 
                 foreach (var dependency in package.Dependencies)
@@ -1101,14 +1105,15 @@ Please see https://docs.chocolatey.org/en-us/troubleshooting for more
                             new PackageResult(package.Id, package.Version.ToFullStringChecked(), localPath));
 
                         result.Messages.Add(new ResultMessage(ResultType.Error, message));
-                        missingDependencies.Add(dependency.Id);
+                        missingDependencies.Add((dependency.Id, dependency.VersionRange));
                         continue;
                     }
 
-                    // Check if the found version satisfies the requested range
                     if (!dependency.VersionRange.Satisfies(found.Version))
                     {
-                        var message = $"Version constraint not satisfied for '{dependency.Id}'. Required: {dependency.VersionRange.PrettyPrint()}, but found: {found.Version.ToFullStringChecked()}.";
+                        var versionRangeText = dependency.VersionRange.PrettyPrint();
+                        var installedVersion = found.Version.ToFullStringChecked();
+                        var message = $"Version constraint not satisfied for '{dependency.Id}'. Required: {versionRangeText}, but found: {installedVersion}.";
 
                         this.Log().Error($"{package.Id} - {message}");
 
@@ -1118,34 +1123,98 @@ Please see https://docs.chocolatey.org/en-us/troubleshooting for more
                             new PackageResult(package.Id, package.Version.ToFullStringChecked(), localPath));
 
                         result.Messages.Add(new ResultMessage(ResultType.Error, message));
-                        failedConstraints.Add(dependency.Id);
+
+                        // Build actionable suggestion
+                        var isUserRequested = sourcePackageDependencyInfos.Any(
+                            spdi => spdi.Id.Equals(dependency.Id, StringComparison.OrdinalIgnoreCase));
+
+                        var isInstalled = IsInstalled(dependency.Id);
+
+                        var suggestionMessage = GetVersionConstraintSuggestion(
+                            dependency.Id, dependency.VersionRange, isUserRequested, isInstalled);
+
+                        result.Messages.Add(new ResultMessage(ResultType.Suggestion, suggestionMessage));
+                        validationFailed = true;
                     }
                 }
 
-                if ((missingDependencies.Count > 0 || failedConstraints.Count > 0)
-                    && packageResultsToReturn.TryGetValue(package.Id, out result))
+                if (missingDependencies.Count > 0 && packageResultsToReturn.TryGetValue(package.Id, out result))
                 {
                     validationFailed = true;
 
-                    if (missingDependencies.Count > 0)
+                    foreach (var kvp in missingDependencies)
                     {
+                        var packageId = kvp.Id;
+                        var versionRange = kvp.VersionRange;
+
+                        string installCommand;
+
+                        var exactVersion = GetExactVersionHint(versionRange);
+
+                        if (!(exactVersion is null))
+                        {
+                            installCommand = $"choco install {packageId} --version={exactVersion}";
+                        }
+                        else
+                        {
+                            installCommand = $"choco install {packageId} --version=<required_version>";
+                        }
+
                         result.Messages.Add(new ResultMessage(
                             ResultType.Suggestion,
-                            $"Install the missing packages using: choco install {string.Join(" ", missingDependencies)}"));
+                            $"Install missing dependency using: {installCommand}"));
                     }
 
-                    if (failedConstraints.Count > 0)
-                    {
-                        result.Messages.Add(new ResultMessage(
-                            ResultType.Suggestion,
-                            $"Upgrade to compatible versions using: choco upgrade {string.Join(" ", failedConstraints)}"));
-                    }
+
                 }
             }
-
+            
             return !validationFailed;
         }
 
+        private string GetVersionConstraintSuggestion(string packageId, VersionRange versionRange, bool isUserRequested, bool isInstalled)
+        {
+            var exactVersion = GetExactVersionHint(versionRange);
+
+            if (isUserRequested && !(exactVersion is null))
+            {
+                if (isInstalled)
+                {
+                    return $"Upgrade to a compatible version using: choco upgrade {packageId} --version={exactVersion} --allow-downgrade";
+                }
+                else
+                {
+                    return $"Install a compatible version using: choco install {packageId} --version={exactVersion}";
+                }
+            }
+
+            // fallback suggestions
+            if (isInstalled)
+            {
+                return $"Upgrade to a compatible version using: choco upgrade {packageId} --version=<required_version> --allow-downgrade";
+            }
+            else if (isUserRequested)
+            {
+                return $"Install a version that satisfies the constraint using: choco install {packageId} --version=<required_version>";
+            }
+            else
+            {
+                return $"Upgrade to compatible versions using: choco upgrade {packageId}";
+            }
+        }
+
+
+        private string GetExactVersionHint(VersionRange versionRange)
+        {
+            if (versionRange.HasLowerAndUpperBounds &&
+                versionRange.MinVersion == versionRange.MaxVersion &&
+                versionRange.IsMinInclusive && versionRange.IsMaxInclusive)
+            {
+                return versionRange.MinVersion.ToNormalizedStringChecked();
+            }
+
+            return null;
+        }
 
         protected virtual string GetDependencyResolutionErrorMessage(NuGetResolverConstraintException exception)
         {
