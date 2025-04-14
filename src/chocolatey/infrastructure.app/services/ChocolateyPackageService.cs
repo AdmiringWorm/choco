@@ -1437,6 +1437,7 @@ If a package is failing because it is a dependency of another package
             var successes = packageResults.OrEmpty().Where(p => p.Value.Success && !p.Value.Inconclusive).OrderBy(p => p.Value.Name);
             var failures = packageResults.Count(p => !p.Value.Success);
             var warnings = packageResults.Count(p => p.Value.Warning);
+            var suggestions = packageResults.Count(p => p.Value.Suggestions);
             var rebootPackages = packageResults.Count(p => new[] { 1641, 3010 }.Contains(p.Value.ExitCode));
             this.Log().Warn(
                 () => @"{0}{1} {2} {3}/{4} packages. {5}{0} See the log for details ({6}).".FormatWith(
@@ -1497,6 +1498,25 @@ The recent package changes indicate a reboot is necessary.
                             failure.Value.ExitCode != 0 ? " (exited {0})".FormatWith(failure.Value.ExitCode) : string.Empty,
                             errorMessage != null ? " - {0}".FormatWith(errorMessage.Message) : string.Empty
                             ));
+                }
+            }
+
+            if (suggestions != 0)
+            {
+                {
+                    this.Log().Info("");
+                    this.Log().Warn("Suggested Actions");
+                    foreach (var suggestion in packageResults.Where(p => p.Value.Suggestions).OrderBy(p => p.Value.Name).OrEmpty())
+                    {
+                        var suggestionMessages = suggestion.Value.Messages.Where(m => m.MessageType == ResultType.Suggestion);
+
+                        foreach (var message in suggestionMessages.Where(m => m != null))
+                        {
+                            this.Log().Warn(" - {0} - {1}",
+                                suggestion.Value.Name,
+                                message.Message);
+                        }
+                    }
                 }
             }
 

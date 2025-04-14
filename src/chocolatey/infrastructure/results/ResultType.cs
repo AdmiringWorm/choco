@@ -55,5 +55,10 @@ namespace chocolatey.infrastructure.results
         ///   These are errors
         /// </summary>
         Error,
+
+        /// <summary>
+        /// These are suggested action that can be made to attempt to resolve an issue.
+        /// </summary>
+        Suggestion,
     }
 }

@@ -41,6 +41,11 @@ namespace chocolatey.infrastructure.results
             get { return Messages.Any(x => x.MessageType == ResultType.Warn); }
         }
 
+        public bool Suggestions
+        {
+            get { return Messages.Any(x => x.MessageType == ResultType.Suggestion); }
+        }
+
         public string Name { get; private set; }
         public string Version { get; private set; }
         public IPackageMetadata PackageMetadata { get; private set; }
