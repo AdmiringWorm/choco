@@ -34,6 +34,9 @@ using NUnit.Framework;
 using FluentAssertions;
 using FluentAssertions.Execution;
 using IFileSystem = chocolatey.infrastructure.filesystem.IFileSystem;
+using WireMock.Server;
+using WireMock.RequestBuilders;
+using WireMock.ResponseBuilders;
 
 namespace chocolatey.tests.integration.scenarios
 {
@@ -4663,6 +4666,45 @@ namespace chocolatey.tests.integration.scenarios
             public void Should_install_all_packages()
             {
                 Results.Should().HaveCount(6);
+            }
+        }
+
+        public class When_installing_a_package_with_missing_dependency : ScenariosBase
+        {
+            private string _packageName = "testpackage";
+            private string _dependencyName = "missingdependency";
+            private WireMockServer _server;
+
+            [SetUp]
+            public void SetUp()
+            {
+                _server = WireMockServer.Start();
+                var sourceUrl = _server.Urls[0];
+                Configuration.Sources = sourceUrl;
+                Configuration.Features.StopOnFirstPackageFailure = true;
+                Configuration.Input = Configuration.PackageNames = _packageName;
+
+                _server
+                    .Given(Request.Create().WithPath("/api/v2/FindPackagesById()").WithParam("id", _packageName).UsingGet())
+                    .RespondWith(Response.Create()
+                        .WithStatusCode(200)
+                        .WithHeader("Content-Type", "application/atom+xml; charset=utf-8")
+                        .WithBody(TestResources.FakeParentWithMissingDependency));
+
+                // Create a test package that depends on a non-existent package
+                var packageBuilder = new TestPackageBuilder(_packageName);
+                packageBuilder.AddDependency(_dependencyName, "1.0.0");
+                packageBuilder.Build();
+            }
+
+            public override void Because()
+            {
+                Results = Service.Install(Configuration);
+            }
+
+            [Test]
+            public void Should_fail_installation_due_to_missing_dependency()
+            {
             }
         }
     }

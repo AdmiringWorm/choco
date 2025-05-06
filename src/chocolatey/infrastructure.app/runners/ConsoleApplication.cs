@@ -123,6 +123,7 @@ namespace chocolatey.infrastructure.app.runners
             var successes = validationResults.Count(v => v.Status == ValidationStatus.Success);
             var warnings = validationResults.Count(v => v.Status == ValidationStatus.Warning);
             var errors = validationResults.Count(v => v.Status == ValidationStatus.Error);
+            var suggestions = validationResults.Count(v => v.Status == ValidationStatus.Suggestion);
 
             var logOnWarnings = config.Features.LogValidationResultsOnWarnings;
             if (config.RegularOutput)
@@ -152,6 +153,17 @@ namespace chocolatey.infrastructure.app.runners
                 foreach (var error in validationResults.Where(p => p.Status == ValidationStatus.Error).OrEmpty())
                 {
                     this.Log().Error(" - {0}".FormatWith(error.Message));
+                }
+            }
+
+            if (suggestions != 0)
+            {
+                this.Log().Info("");
+                this.Log().Info("Validation Suggestions:");
+
+                foreach (var suggestion in validationResults.Where(p => p.Status == ValidationStatus.Suggestion).OrEmpty())
+                {
+                    this.Log().Warn(" - {0}", suggestion.Message);
                 }
             }
 

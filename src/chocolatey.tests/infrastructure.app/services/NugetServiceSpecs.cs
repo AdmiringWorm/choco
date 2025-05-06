@@ -27,6 +27,10 @@ using NuGet.Common;
 using NuGet.Packaging;
 using FluentAssertions;
 using IFileSystem = chocolatey.infrastructure.filesystem.IFileSystem;
+using NuGet.Packaging.Core;
+using NuGet.Versioning;
+using System.Collections.Concurrent;
+using chocolatey.infrastructure.results;
 
 namespace chocolatey.tests.infrastructure.app.services
 {

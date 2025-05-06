@@ -82,7 +82,17 @@ namespace chocolatey.infrastructure.app.nuget
                     this.Log().Debug(prefixedMessage);
                     break;
                 case LogLevel.Warning:
-                    this.Log().Warn(prefixedMessage);
+                    if (message.Contains("One or more unresolved package dependency constraints detected"))
+                    {
+                        // We will assume this is one of the situations we are handling with
+                        // custom error/warning messages, and only output this warning to the log
+                        // file itself.
+                        this.Log().Warn(ChocolateyLoggers.LogFileOnly, prefixedMessage);
+                    }
+                    else
+                    {
+                        this.Log().Warn(prefixedMessage);
+                    }
                     break;
                 case LogLevel.Error:
                     this.Log().Error(prefixedMessage);

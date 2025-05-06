@@ -35,6 +35,8 @@ using chocolatey.infrastructure.app.rules;
 using System.Linq;
 using System;
 using System.Security.AccessControl;
+using chocolatey.infrastructure.diagnostics;
+using chocolatey.infrastructure.app.diagnostics;
 
 namespace chocolatey.infrastructure.app.registration
 {
@@ -83,7 +85,11 @@ namespace chocolatey.infrastructure.app.registration
             registrator.RegisterService<IValidation>(
                 typeof(GlobalConfigurationValidation),
                 typeof(SystemStateValidation),
-                typeof(CacheFolderLockdownValidation));
+                typeof(CacheFolderLockdownValidation),
+                typeof(DependencyValidation));
+
+            registrator.RegisterService<IDiagnosticProvider>(
+                typeof(DependencyDiagnosticProvider));
 
             // Rule registrations
             registrator.RegisterService<IRuleService, RuleService>();

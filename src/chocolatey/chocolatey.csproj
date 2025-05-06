@@ -180,11 +180,14 @@
     <Compile Include="infrastructure.app\attributes\MultiServiceAttribute.cs" />
     <Compile Include="infrastructure.app\commands\ChocolateyLicenseCommand.cs" />
     <Compile Include="infrastructure.app\commands\ChocolateyCacheCommand.cs" />
+    <Compile Include="infrastructure.app\commands\ChocolateyDiagnosticCommand.cs" />
     <Compile Include="infrastructure.app\commands\ChocolateyListCommand.cs" />
     <Compile Include="infrastructure.app\commands\ChocolateyRuleCommand.cs" />
     <Compile Include="infrastructure.app\commands\ChocolateySupportCommand.cs" />
     <Compile Include="infrastructure.app\commands\ChocolateyTemplateCommand.cs" />
     <Compile Include="infrastructure.app\commands\ChocolateyCommandBase.cs" />
+    <Compile Include="infrastructure.app\diagnostics\DependencyDiagnosticProvider.cs" />
+    <Compile Include="infrastructure.app\diagnostics\DiagnosticResultFormatter.cs" />
     <Compile Include="infrastructure.app\domain\ApiKeyCommandType.cs" />
     <Compile Include="infrastructure.app\domain\CacheCommandType.cs" />
     <Compile Include="infrastructure.app\domain\LicenseCommandType.cs" />
@@ -224,6 +227,7 @@
     <Compile Include="infrastructure.app\services\RuleService.cs" />
     <Compile Include="infrastructure.app\services\ProcessCollectorService.cs" />
     <Compile Include="infrastructure.app\validations\CacheFolderValidationLockdown.cs" />
+    <Compile Include="infrastructure.app\validations\DependencyValidation.cs" />
     <Compile Include="infrastructure\commands\ExitCodeDescription.cs" />
     <Compile Include="infrastructure\cryptography\DefaultEncryptionUtility.cs" />
     <Compile Include="infrastructure\adapters\IEncryptionUtility.cs" />
@@ -254,6 +258,9 @@
     <Compile Include="infrastructure.app\utility\PackageUtility.cs" />
     <Compile Include="infrastructure.app\validations\SystemStateValidation.cs" />
     <Compile Include="infrastructure\cryptography\HashConverter.cs" />
+    <Compile Include="infrastructure\diagnostics\DiagnosticResult.cs" />
+    <Compile Include="infrastructure\diagnostics\DiagnosticStatus.cs" />
+    <Compile Include="infrastructure\diagnostics\IDiagnosticProvider.cs" />
     <Compile Include="infrastructure\filesystem\FileSystem.cs" />
     <Compile Include="FileSystemExtensions.cs" />
     <Compile Include="infrastructure\information\ExtensionInformation.cs" />
@@ -510,6 +517,7 @@
   <ItemGroup>
     <AdditionalFiles Include="BannedSymbols.txt" />
   </ItemGroup>
+  <ItemGroup />
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
   <Target Name="EnsureNuGetPackageBuildImports" BeforeTargets="PrepareForBuild">
     <PropertyGroup>

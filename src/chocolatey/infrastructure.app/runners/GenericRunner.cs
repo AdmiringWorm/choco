@@ -358,7 +358,7 @@ Chocolatey is not an official build (bypassed with --allow-unofficial).
 ");
                 var selection = InteractivePrompt.PromptForConfirmation(@"
  Do you want to continue?", new[] { "yes", "no" },
-                        defaultChoice: null,
+                        defaultChoice: "no",
                         requireAnswer: false,
                         allowShortAnswer: true,
                         shortPrompt: true,

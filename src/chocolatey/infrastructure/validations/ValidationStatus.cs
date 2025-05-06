@@ -22,6 +22,7 @@ namespace chocolatey.infrastructure.validations
         Checked,
         Success,
         Error,
-        Warning
+        Warning,
+        Suggestion
     }
 }

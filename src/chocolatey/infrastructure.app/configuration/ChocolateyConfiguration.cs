@@ -60,6 +60,7 @@ namespace chocolatey.infrastructure.app.configuration
             TemplateCommand = new TemplateCommandConfiguration();
             CacheCommand = new CacheCommandConfiguration();
             RuleCommand = new RuleCommandConfiguration();
+            DiagnosticCommand = new DiagnosticCommandConfiguration();
             IncludeHeaders = false;
 
 #if DEBUG
@@ -520,6 +521,8 @@ NOTE: Hiding sensitive configuration data! Please double and triple
         /// </summary>
         public RuleCommandConfiguration RuleCommand { get; set; }
 
+        public DiagnosticCommandConfiguration DiagnosticCommand { get; set; }
+
 #pragma warning disable IDE0022, IDE1006
         [Obsolete("This overload is deprecated and will be removed in v3.")]
         public void start_backup()
@@ -831,5 +834,15 @@ NOTE: Hiding sensitive configuration data! Please double and triple
         /// Gets or sets the sub command to execute.
         /// </summary>
         public string Command { get; set; }
+    }
+
+    [Serializable]
+    public sealed class DiagnosticCommandConfiguration
+    {
+        /// <summary>
+        /// Gets or sets the name of the diagnostic provider to run.
+        /// </summary>
+        /// <remarks>Defaults to null, which means to run all diagnostics.</remarks>
+        public string ProviderName { get; set; }
     }
 }

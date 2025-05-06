@@ -16,6 +16,7 @@
 
 using System;
 using System.Runtime;
+using chocolatey.infrastructure.app.configuration;
 using chocolatey.infrastructure.logging;
 
 namespace chocolatey
@@ -87,6 +88,18 @@ namespace chocolatey
             }
         }
 
+        public static void Info(this ILog logger, ChocolateyConfiguration config, string message, params object[] formatting)
+        {
+            if (config.RegularOutput)
+            {
+                logger.Info(message, formatting);
+            }
+            else
+            {
+                logger.Info(ChocolateyLoggers.LogFileOnly, message, formatting);
+            }
+        }
+
         [TargetedPatchingOptOut("Performance critical to inline this type of method across NGen image boundaries")]
         public static void Info(this ILog logger, ChocolateyLoggers logType, string message, params object[] formatting)
         {
@@ -138,6 +151,18 @@ namespace chocolatey
             }
         }
 
+        public static void Warn(this ILog logger, ChocolateyConfiguration config, string message, params object[] formatting)
+        {
+            if (config.RegularOutput)
+            {
+                logger.Warn(message, formatting);
+            }
+            else
+            {
+                logger.Warn(ChocolateyLoggers.LogFileOnly, message, formatting);
+            }
+        }
+
         [TargetedPatchingOptOut("Performance critical to inline this type of method across NGen image boundaries")]
         public static void Warn(this ILog logger, ChocolateyLoggers logType, Func<string> message)
         {
@@ -169,6 +194,18 @@ namespace chocolatey
                 default:
                     logType.ToStringSafe().Log().Error(message, formatting);
                     break;
+            }
+        }
+
+        public static void Error(this ILog logger, ChocolateyConfiguration config, string message, params object[] formatting)
+        {
+            if (config.RegularOutput)
+            {
+                logger.Error(message, formatting);
+            }
+            else
+            {
+                logger.Error(ChocolateyLoggers.LogFileOnly, message, formatting);
             }
         }
 

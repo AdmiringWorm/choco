@@ -17,6 +17,7 @@
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Net;
@@ -50,7 +51,6 @@ using NuGet.Protocol.Core.Types;
 using NuGet.Resolver;
 using NuGet.Versioning;
 using static chocolatey.StringResources;
-using chocolatey.infrastructure.configuration;
 
 namespace chocolatey.infrastructure.app.services
 {
@@ -803,15 +803,40 @@ Please see https://docs.chocolatey.org/en-us/troubleshooting for more
                     log: _nugetLogger
                 );
 
-                if (!config.IgnoreDependencies && !ValidateLocalDependencies(sourcePackageDependencyInfos, localPackagesDependencyInfos, packageResultsToReturn))
+                if (!config.IgnoreDependencies && !ValidateLocalDependencies(config, sourcePackageDependencyInfos, allLocalPackages.Select(l => l.PackageMetadata), packageResultsToReturn))
                 {
                     if (config.Features.StopOnFirstPackageFailure)
                     {
-                        throw new ApplicationException("Stopping due to issues with local dependencies.");
+                        this.Log().Error(config, "Stopping installation due to one or more issues with local or remote dependencies.");
+
+                        return packageResultsToReturn;
+                    }
+                    else if (config.PromptForConfirmation && config.RegularOutput)
+                    {
+                        this.Log().Warn("⚠️ One or more issues with local or remote dependencies were detected.");
+                        this.Log().Warn("These issues may lead to installation or upgrade failure.");
+
+                        var selection = InteractivePrompt.PromptForConfirmation(
+                            @"
+ Do you want to continue anyway?",
+                            choices: new[] { "yes", "no" },
+                            defaultChoice: "no",
+                            requireAnswer: true,
+                            allowShortAnswer: true,
+                            shortPrompt: true);
+
+                        if (!selection.IsEqualTo("yes"))
+                        {
+                            this.Log().Error("Installation was canceled due to local or remote dependency issues.");
+
+                            return packageResultsToReturn;
+                        }
+
+                        this.Log().Warn("⚠️ One or more local or remote dependency issues were found. Continuing execution.");
                     }
                     else
                     {
-                        this.Log().Warn("Issues with local dependencies found.");
+                        this.Log().Warn(config, "⚠️ One or more local or remote dependency issues were found. Continuing execution.");
                     }
                 }
 
@@ -1072,15 +1097,31 @@ Please see https://docs.chocolatey.org/en-us/troubleshooting for more
         }
 
         private bool ValidateLocalDependencies(
-    HashSet<SourcePackageDependencyInfo> sourcePackageDependencyInfos,
-    IEnumerable<SourcePackageDependencyInfo> localPackagesDependencyInfos,
-    ConcurrentDictionary<string, PackageResult> packageResultsToReturn)
+            ChocolateyConfiguration config,
+            HashSet<SourcePackageDependencyInfo> sourcePackageDependencyInfos,
+            IEnumerable<IPackageMetadata> localPackagesDependencyInfos,
+            ConcurrentDictionary<string, PackageResult> packageResultsToReturn)
         {
             bool IsInstalled(string packageId)
             {
                 return localPackagesDependencyInfos.Any(p => p.Id.Equals(packageId, StringComparison.OrdinalIgnoreCase));
             }
 
+            bool IsPinned(string packageId)
+            {
+                var package = localPackagesDependencyInfos.FirstOrDefault(p => p.Id.Equals(packageId, StringComparison.OrdinalIgnoreCase));
+
+                if (package is null)
+                {
+                    return false;
+                }
+
+                var info = _packageInfoService.Get(package);
+                return info?.IsPinned == true;
+            }
+
+            var stopwatch = new Stopwatch();
+            stopwatch.Start();
             var sources = sourcePackageDependencyInfos
                 .GroupBy(spdi => spdi.Id, StringComparer.OrdinalIgnoreCase)
                 .ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
@@ -1092,17 +1133,15 @@ Please see https://docs.chocolatey.org/en-us/troubleshooting for more
                 var missingDependencies = new List<(string Id, VersionRange VersionRange)>();
                 PackageResult result;
 
-                foreach (var dependency in package.Dependencies)
+                foreach (var dependency in package.DependencyGroups.SelectMany(group => group.Packages))
                 {
                     if (!sources.TryGetValue(dependency.Id, out var found))
                     {
                         var message = $"Required dependency '{dependency.Id}' was not found locally or among the packages being installed.";
-                        this.Log().Error($"{package.Id} - {message}");
-
-                        var localPath = package.DownloadUri?.LocalPath;
+                        this.Log().Error(config, $"{package.Id} - {message}");
                         result = packageResultsToReturn.GetOrAdd(
                             package.Id,
-                            new PackageResult(package.Id, package.Version.ToFullStringChecked(), localPath));
+                            new PackageResult(package, null));
 
                         result.Messages.Add(new ResultMessage(ResultType.Error, message));
                         missingDependencies.Add((dependency.Id, dependency.VersionRange));
@@ -1115,12 +1154,11 @@ Please see https://docs.chocolatey.org/en-us/troubleshooting for more
                         var installedVersion = found.Version.ToFullStringChecked();
                         var message = $"Version constraint not satisfied for '{dependency.Id}'. Required: {versionRangeText}, but found: {installedVersion}.";
 
-                        this.Log().Error($"{package.Id} - {message}");
+                        this.Log().Error(config, $"{package.Id} - {message}");
 
-                        var localPath = package.DownloadUri?.LocalPath;
                         result = packageResultsToReturn.GetOrAdd(
                             package.Id,
-                            new PackageResult(package.Id, package.Version.ToFullStringChecked(), localPath));
+                            new PackageResult(package, null));
 
                         result.Messages.Add(new ResultMessage(ResultType.Error, message));
 
@@ -1129,6 +1167,14 @@ Please see https://docs.chocolatey.org/en-us/troubleshooting for more
                             spdi => spdi.Id.Equals(dependency.Id, StringComparison.OrdinalIgnoreCase));
 
                         var isInstalled = IsInstalled(dependency.Id);
+
+                        if (isInstalled && IsPinned(dependency.Id))
+                        {
+                            result.Messages.Add(new ResultMessage(
+                                ResultType.Suggestion,
+                                $"The package '{dependency.Id}' is pinned and may prevent installing a compatible version. " +
+                                $"Consider unpinning it using: choco pin remove --name={dependency.Id}"));
+                        }
 
                         var suggestionMessage = GetVersionConstraintSuggestion(
                             dependency.Id, dependency.VersionRange, isUserRequested, isInstalled);
@@ -1168,6 +1214,10 @@ Please see https://docs.chocolatey.org/en-us/troubleshooting for more
 
                 }
             }
+
+            stopwatch.Stop();
+
+            this.Log().Debug("Validated Local Dependencies in '{0}'", stopwatch.Elapsed);
             
             return !validationFailed;
         }
