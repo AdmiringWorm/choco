@@ -100,6 +100,20 @@ NOTE: See scripting in the command reference (`choco -?`) for how to
 ");
             }
 
+            var additionalSections = GetAdditionalSections(commandForAttribute, configuration);
+
+            if (!(additionalSections is null) && additionalSections.Count > 0)
+            {
+                foreach (var section in additionalSections)
+                {
+                    this.Log().Info(ChocolateyLoggers.Important, section.Key);
+                    this.Log().Info(string.Empty);
+
+                    this.Log().Info(section.Value);
+                    this.Log().Info(string.Empty);
+                }
+            }
+
             var normalExitCodes = GetNormalExitCodes(configuration).ToArray();
             var enhancedExitCodes = GetEnhancedExitCodes(configuration).ToArray();
             var additionalExitCodeDescription = GetAdditionalExitCodeDescription();
@@ -124,6 +138,12 @@ Exit codes that normally result from running this command.
                 OutputExitCodes(enhancedExitCodes);
             }
 
+            if (!string.IsNullOrEmpty(additionalExitCodeDescription))
+            {
+                this.Log().Info(string.Empty);
+                this.Log().Info(additionalExitCodeDescription);
+            }
+
             if (normalExitCodes.Length > 0 || enhancedExitCodes.Length > 0)
             {
                 this.Log().Info(@"
@@ -132,12 +152,6 @@ If you find other exit codes that we have not yet documented, please
  {0}.
 
 ", GetRepositoryIssueLink());
-            }
-
-            if (!string.IsNullOrEmpty(additionalExitCodeDescription))
-            {
-                this.Log().Info(additionalExitCodeDescription);
-                this.Log().Info(string.Empty);
             }
 
             var additionalHelpContent = GetAdditionalHelpContent();
@@ -157,6 +171,11 @@ If you find other exit codes that we have not yet documented, please
                 this.Log().Info(string.Empty);
                 this.Log().Info(optionsAndSwitchesContent);
             }
+        }
+
+        protected virtual IDictionary<string, string> GetAdditionalSections(CommandForAttribute attribute, ChocolateyConfiguration configuration)
+        {
+            return default;
         }
 
         protected virtual string GetCommandDescription(CommandForAttribute attribute, ChocolateyConfiguration configuration)
@@ -240,17 +259,17 @@ If you find other exit codes that we have not yet documented, please
             }
         }
 
-        private string GetAdditionalExitCodeDescription()
+        protected virtual string GetAdditionalExitCodeDescription()
         {
             return string.Empty;
         }
 
-        private string GetAdditionalHelpContent()
+        protected virtual string GetAdditionalHelpContent()
         {
             return string.Empty;
         }
 
-        private string GetOptionsAndSwitchesDescription()
+        protected virtual string GetOptionsAndSwitchesDescription()
         {
             return string.Empty;
         }
