@@ -27,8 +27,8 @@ using chocolatey.infrastructure.app.services;
 
 namespace chocolatey.infrastructure.app.commands
 {
-    [CommandFor("apikey", "retrieves, saves or deletes an API key for a particular source")]
-    [CommandFor("setapikey", "retrieves, saves or deletes an API key for a particular source (alias for apikey)")]
+    [CommandFor("apikey", "Manages API keys for specific sources when pushing Chocolatey CLI packages.")]
+    [CommandFor("setapikey", "Manages API keys for specific sources when pushing Chocolatey CLI packages. (alias for apikey)")]
     public class ChocolateyApiKeyCommand : ChocolateyCommandBase, ICommand
     {
         private readonly IChocolateyConfigSettingsService _configSettingsService;
@@ -44,10 +44,10 @@ namespace chocolatey.infrastructure.app.commands
 
             optionSet
                 .Add("s=|source=",
-                     "Source [REQUIRED] - The source location for the key",
+                     "[REQUIRED] – The package source the API key applies to.",
                      option => configuration.Sources = option.UnquoteSafe())
                 .Add("k=|key=|apikey=|api-key=",
-                     "ApiKey - The API key for the source. This is the authentication that identifies you and allows you to push to a source. With some sources this is either a key or it could be a user name and password specified as 'user:password'.",
+                     "The API key used to authenticate with the specified source. This key identifies you and allows you to push packages to that source. Depending on the source, the key may be a standard API token or a user credential formatted as `'username:password'`.",
                      option => configuration.ApiKeyCommand.Key = option.UnquoteSafe())
                 ;
         }
@@ -110,10 +110,12 @@ namespace chocolatey.infrastructure.app.commands
 
         protected override string GetCommandDescription(CommandForAttribute attribute, ChocolateyConfiguration configuration)
         {
-            return @"This lists API keys that are set or sets an api key for a particular
- source so it doesn't need to be specified every time.
+            return @"**Lists existing API keys or sets an API key for a specific source.**
 
-Anything that doesn't contain source and key will list API keys.";
+If no `--source` and `--api-key` are provided, the command displays all saved API  
+keys.  
+If both are provided, the API key is saved for that source so it doesn't need to  
+be specified in future operations.";
         }
 
         protected override IEnumerable<string> GetCommandExamples(CommandForAttribute[] attributes, ChocolateyConfiguration configuration)
@@ -133,35 +135,50 @@ Anything that doesn't contain source and key will list API keys.";
 
         protected override string GetCommandExampleDescription(ChocolateyConfiguration configuration)
         {
-            return @"For source location, this can be a folder/file share or an
-http location. When it comes to urls, they can be different from the packages
-url (where packages are searched and installed from). As an example, for
-Chocolatey's community package package repository, the package url is
-https://community.chocolatey.org/api/v2/, but the push url is https://push.chocolatey.org
-(and the deprecated https://chocolatey.org/ as a push url). Check the
-documentation for your choice of repository to learn what the push url is.
+            return @"For the source location, this can be a folder, file share, or an HTTP(S) URL.
+When using URLs, the push location may differ from the standard package source  
+used for searching and installing packages. For example, the Chocolatey  
+Community Repository uses `{0}` as the
+package source URL, but the push URL is `{1}`
+(`{2}` is now deprecated for pushing).
 
-For the key, this can be an apikey that is provided by your source repository.
-With some sources, like Nexus, this can be a NuGet API key or it could be a
-user name and password specified as 'user:password' for the API key. Please see
-your repository's documentation (for Nexus, please see
-https://ch0.co/nexus2apikey).";
+Refer to your repository's documentation to determine the correct push URL.
+
+For the API key, this is typically a key provided by your source repository.
+Some sources, like Nexus, may require a NuGet API key or a user credential
+formatted as `'username:password'`. Please consult your repository’s
+documentation.
+For Nexus-specific guidance, see: <https://ch0.co/nexus2apikey>".FormatWith(
+                ApplicationParameters.ChocolateyCommunityFeedSource,
+                ApplicationParameters.ChocolateyCommunityFeedPushSource,
+                ApplicationParameters.ChocolateyCommunityFeedPushSourceOld);
         }
 
-        protected override IDictionary<string, string> GetAdditionalSections(CommandForAttribute attribute, ChocolateyConfiguration configuration)
+        protected override IDictionary<string, string> GetAdditionalSections(
+    CommandForAttribute attribute,
+    ChocolateyConfiguration configuration)
         {
             var sections = new SortedDictionary<string, string>
             {
-                { "Connecting to Chocolatey.org (Community Package Repository)", @"In order to save your API key for {0},
- log in (or register, confirm and then log in) to
- {0}, go to {0}account,
- copy the API Key, and then use it in the following command:
+                {
+                    "Connecting to Chocolatey.org (Community Package Repository)",
+                    @"To save your API key for {0}, follow these steps:
 
-    choco apikey add -k <your key here> -s {0}".FormatWith(ApplicationParameters.ChocolateyCommunityFeedPushSource) }
+1. Log in (or register, confirm your account, and then log in) to the Chocolatey
+   Community Repository at `{1}`.
+2. Navigate to `{1}account` and copy your API key.
+3. Save the key using the following command:
+
+    choco apikey add -k <your key here> -s {0}"
+                .FormatWith(
+                    ApplicationParameters.ChocolateyCommunityFeedPushSource,
+                    ApplicationParameters.ChocolateyCommunityGalleryUrl)
+                }
             };
 
             return sections;
         }
+
 
         protected override IEnumerable<ExitCodeDescription> GetEnhancedExitCodes(ChocolateyConfiguration configuration)
         {
@@ -170,9 +187,10 @@ https://ch0.co/nexus2apikey).";
 
         protected override string GetAdditionalExitCodeDescription()
         {
-            return @"NOTE: Starting in v2.3.0, if you have the feature '{0}'
- turned on, then choco will provide enhanced exit codes that allow
- better integration and scripting.".FormatWith(ApplicationParameters.Features.UseEnhancedExitCodes);
+            return @"NOTE: Starting in v2.3.0, if the '{0}' feature is enabled,  
+Chocolatey will return enhanced exit codes to support improved scripting and  
+automation scenarios.
+".FormatWith(ApplicationParameters.Features.UseEnhancedExitCodes);
         }
 
         public virtual void DryRun(ChocolateyConfiguration configuration)
