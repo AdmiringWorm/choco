@@ -23,14 +23,13 @@ using chocolatey.infrastructure.commandline;
 using chocolatey.infrastructure.app.configuration;
 using chocolatey.infrastructure.commands;
 using chocolatey.infrastructure.configuration;
-using chocolatey.infrastructure.logging;
 using chocolatey.infrastructure.app.services;
 
 namespace chocolatey.infrastructure.app.commands
 {
     [CommandFor("apikey", "retrieves, saves or deletes an API key for a particular source")]
     [CommandFor("setapikey", "retrieves, saves or deletes an API key for a particular source (alias for apikey)")]
-    public class ChocolateyApiKeyCommand : ICommand
+    public class ChocolateyApiKeyCommand : ChocolateyCommandBase, ICommand
     {
         private readonly IChocolateyConfigSettingsService _configSettingsService;
 
@@ -104,33 +103,37 @@ namespace chocolatey.infrastructure.app.commands
             }
         }
 
-        public virtual void HelpMessage(ChocolateyConfiguration configuration)
+        protected override string GetCommandName(CommandForAttribute attribute)
         {
-            this.Log().Info(ChocolateyLoggers.Important, "ApiKey Command");
-            this.Log().Info(@"
-This lists API keys that are set or sets an api key for a particular
+            return "ApiKey";
+        }
+
+        protected override string GetCommandDescription(CommandForAttribute attribute, ChocolateyConfiguration configuration)
+        {
+            return @"This lists API keys that are set or sets an api key for a particular
  source so it doesn't need to be specified every time.
 
-Anything that doesn't contain source and key will list API keys.
-");
-            "chocolatey".Log().Info(ChocolateyLoggers.Important, "Usage");
-            "chocolatey".Log().Info(@"
-    choco apikey [<options/switches>]
-    choco setapikey [<options/switches>]
-");
+Anything that doesn't contain source and key will list API keys.";
+        }
 
-            "chocolatey".Log().Info(ChocolateyLoggers.Important, "Examples");
-            "chocolatey".Log().Info(@"
-    choco apikey
-    choco apikey -s https://somewhere/out/there
-    choco apikey list
-    choco apikey list -s https://somewhere/out/there
-    choco apikey add -s=""https://somewhere/out/there/"" -k=""value""
-    choco apikey add -s ""https://push.chocolatey.org/"" -k=""123-123123-123""
-    choco apikey add -s ""http://internal_nexus"" -k=""user:password""
-    choco apikey remove -s https://somewhere/out/there
+        protected override IEnumerable<string> GetCommandExamples(CommandForAttribute[] attributes, ChocolateyConfiguration configuration)
+        {
+            return new[]
+            {
+                "choco apikey",
+                "choco apikey -s https://somewhere/out/there",
+                "choco apikey list",
+                "choco apikey list -s https://somewhere/out/there",
+                "choco apikey add -s=\"https://somewhere/out/there/\" -k=\"value\"",
+                "choco apikey add -s \"https://push.chocolatey.org/\" -k=\"123-123123-123\"",
+                "choco apikey add -s \"http://internal_nexus\" -k=\"user:password\"",
+                "choco apikey remove -s https://somewhere/out/there"
+            };
+        }
 
-For source location, this can be a folder/file share or an
+        protected override string GetCommandExampleDescription(ChocolateyConfiguration configuration)
+        {
+            return @"For source location, this can be a folder/file share or an
 http location. When it comes to urls, they can be different from the packages
 url (where packages are searched and installed from). As an example, for
 Chocolatey's community package package repository, the package url is
@@ -142,43 +145,34 @@ For the key, this can be an apikey that is provided by your source repository.
 With some sources, like Nexus, this can be a NuGet API key or it could be a
 user name and password specified as 'user:password' for the API key. Please see
 your repository's documentation (for Nexus, please see
-https://ch0.co/nexus2apikey).
+https://ch0.co/nexus2apikey).";
+        }
 
-NOTE: See scripting in the command reference (`choco -?`) for how to
- write proper scripts and integrations.
-
-");
-
-            "chocolatey".Log().Info(ChocolateyLoggers.Important, "Connecting to Chocolatey.org (Community Package Repository)");
-            "chocolatey".Log().Info(() => @"
-In order to save your API key for {0},
+        protected override IDictionary<string, string> GetAdditionalSections(CommandForAttribute attribute, ChocolateyConfiguration configuration)
+        {
+            var sections = new SortedDictionary<string, string>
+            {
+                { "Connecting to Chocolatey.org (Community Package Repository)", @"In order to save your API key for {0},
  log in (or register, confirm and then log in) to
  {0}, go to {0}account,
  copy the API Key, and then use it in the following command:
 
-    choco apikey add -k <your key here> -s {0}
+    choco apikey add -k <your key here> -s {0}".FormatWith(ApplicationParameters.ChocolateyCommunityFeedPushSource) }
+            };
 
-".FormatWith(ApplicationParameters.ChocolateyCommunityFeedPushSource));
+            return sections;
+        }
 
-            "chocolatey".Log().Info(ChocolateyLoggers.Important, "Exit Codes");
-            "chocolatey".Log().Info(@"
-Exit codes that normally result from running this command.
+        protected override IEnumerable<ExitCodeDescription> GetEnhancedExitCodes(ChocolateyConfiguration configuration)
+        {
+            yield return new ExitCodeDescription("nothing to do, apikey already set", 2);
+        }
 
-Normal:
- - 0: operation was successful, no issues detected
- - -1 or 1: an error has occurred
- - 2: nothing to do, apikey already set (enhanced)
-
-NOTE: Starting in v2.3.0, if you have the feature '{0}'
+        protected override string GetAdditionalExitCodeDescription()
+        {
+            return @"NOTE: Starting in v2.3.0, if you have the feature '{0}'
  turned on, then choco will provide enhanced exit codes that allow
- better integration and scripting.
-
-If you find other exit codes that we have not yet documented, please
- file a ticket so we can document it at
- https://github.com/chocolatey/choco/issues/new/choose.
-
-".FormatWith(ApplicationParameters.Features.UseEnhancedExitCodes));
-            "chocolatey".Log().Info(ChocolateyLoggers.Important, "Options and Switches");
+ better integration and scripting.".FormatWith(ApplicationParameters.Features.UseEnhancedExitCodes);
         }
 
         public virtual void DryRun(ChocolateyConfiguration configuration)
