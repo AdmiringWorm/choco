@@ -151,6 +151,7 @@
     <Reference Include="System.Xml" />
   </ItemGroup>
   <ItemGroup>
+    <Compile Include="EnumExtensionsTests.cs" />
     <Compile Include="infrastructure.app\attributes\CommandForAttributeSpecs.cs" />
     <Compile Include="infrastructure.app\commands\ChocolateyCacheCommandSpecs.cs" />
     <Compile Include="infrastructure.app\commands\ChocolateyLicenseCommandSpecs.cs" />

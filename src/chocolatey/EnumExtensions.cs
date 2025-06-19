@@ -66,6 +66,28 @@ namespace chocolatey
             return default(TEnum);
         }
 
+        /// <summary>
+        /// Returns the distinct (non-aliased) names of an enum type.
+        /// Only the first defined name for each unique value is returned.
+        /// </summary>
+        /// <typeparam name="TEnum">The enum type.</typeparam>
+        /// <returns>An array of distinct enum member names.</returns>
+        [EditorBrowsable(EditorBrowsableState.Advanced)]
+        public static string[] GetDistinctNames<TEnum>() where TEnum : Enum
+        {
+            return Enum
+                .GetNames(typeof(TEnum))
+                .Select(name => new
+                {
+                    Name = name,
+                    Value = (TEnum)Enum.Parse(typeof(TEnum), name)
+                })
+                .GroupBy(x => x.Value)
+                .Select(g => g.First().Name)
+                .OrderBy(name => name, StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+        }
+
 #pragma warning disable IDE0022, IDE1006
         [Obsolete("This overload is deprecated and will be removed in v3.")]
         public static string get_description_or_value(this Enum enumeration)
