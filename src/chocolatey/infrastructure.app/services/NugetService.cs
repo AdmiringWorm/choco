@@ -583,7 +583,14 @@ folder.");
             _fileSystem.EnsureDirectoryExists(ApplicationParameters.PackagesLocation);
             var packageResultsToReturn = new ConcurrentDictionary<string, PackageResult>(StringComparer.InvariantCultureIgnoreCase);
 
-            NuGetVersion version = !string.IsNullOrWhiteSpace(config.Version) ? NuGetVersion.Parse(config.Version) : null;
+            NuGetVersion version = null;
+            VersionLimit versionLimit = null;
+
+            if (!string.IsNullOrWhiteSpace(config.Version) && !NuGetVersion.TryParse(config.Version, out version))
+            {
+                versionLimit = VersionLimit.Create(config.Version);
+            }
+
             if (config.Force)
             {
                 config.AllowDowngrade = true;
@@ -711,7 +718,7 @@ folder.");
                     latestPackageVersion = version;
                 }
 
-                var availablePackage = NugetList.FindPackage(packageName, config, _nugetLogger, (SourceCacheContext)sourceCacheContext, remoteEndpoints, latestPackageVersion);
+                var availablePackage = NugetList.FindPackage(packageName, config, _nugetLogger, (SourceCacheContext)sourceCacheContext, remoteEndpoints, latestPackageVersion, versionLimit);
 
                 if (availablePackage == null)
                 {
@@ -1145,7 +1152,13 @@ Please see https://docs.chocolatey.org/en-us/troubleshooting for more
             _fileSystem.EnsureDirectoryExists(ApplicationParameters.PackagesLocation);
             var packageResultsToReturn = new ConcurrentDictionary<string, PackageResult>(StringComparer.InvariantCultureIgnoreCase);
 
-            NuGetVersion version = !string.IsNullOrWhiteSpace(config.Version) ? NuGetVersion.Parse(config.Version) : null;
+            NuGetVersion version = null;
+            VersionLimit versionLimit = null;
+
+            if (!string.IsNullOrWhiteSpace(config.Version) && !NuGetVersion.TryParse(config.Version, out version))
+            {
+                versionLimit = VersionLimit.Create(config.Version);
+            }
 
             if (config.Force)
             {
@@ -1274,7 +1287,7 @@ Please see https://docs.chocolatey.org/en-us/troubleshooting for more
                     // this is a prerelease - opt in for newer prereleases.
                     config.Prerelease = true;
                 }
-                var availablePackage = NugetList.FindPackage(packageName, config, _nugetLogger, (SourceCacheContext)sourceCacheContext, remoteEndpoints, version);
+                var availablePackage = NugetList.FindPackage(packageName, config, _nugetLogger, (SourceCacheContext)sourceCacheContext, remoteEndpoints, version, versionLimit);
 
                 config.Prerelease = originalPrerelease;
 

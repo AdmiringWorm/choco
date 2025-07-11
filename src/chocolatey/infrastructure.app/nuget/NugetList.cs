@@ -27,6 +27,7 @@ using NuGet.Packaging;
 using NuGet.Packaging.Core;
 using NuGet.Protocol.Core.Types;
 using NuGet.Versioning;
+using System.Windows.Forms;
 
 namespace chocolatey.infrastructure.app.nuget
 {
@@ -76,7 +77,13 @@ namespace chocolatey.infrastructure.app.nuget
             var packageRepositoryResources = NugetCommon.GetRepositoryResources(configuration, nugetLogger, filesystem, cacheContext);
             var searchTermLower = configuration.Input.ToLowerSafe();
 
-            NuGetVersion version = !string.IsNullOrWhiteSpace(configuration.Version) ? NuGetVersion.Parse(configuration.Version) : null;
+            VersionLimit versionLimit = null;
+            NuGetVersion version = null;
+
+            if (!string.IsNullOrWhiteSpace(configuration.Version) && !NuGetVersion.TryParse(configuration.Version, out version))
+            {
+                versionLimit = VersionLimit.Create(configuration.Version);
+            }
 
             var searchFilter = new SearchFilter(configuration.Prerelease)
             {
@@ -272,7 +279,7 @@ namespace chocolatey.infrastructure.app.nuget
                 }
                 else
                 {
-                    var exactPackage = FindPackage(searchTermLower, configuration, nugetLogger, (SourceCacheContext)cacheContext, packageRepositoryResources, version);
+                    var exactPackage = FindPackage(searchTermLower, configuration, nugetLogger, (SourceCacheContext)cacheContext, packageRepositoryResources, version, versionLimit);
 
                     if (exactPackage == null)
                     {
@@ -399,14 +406,15 @@ namespace chocolatey.infrastructure.app.nuget
             ILogger nugetLogger,
             SourceCacheContext cacheContext,
             IEnumerable<NuGetEndpointResources> resources,
-            NuGetVersion version = null)
+            NuGetVersion version = null,
+            VersionLimit versionLimit = null)
         {
             var packagesList = new HashSet<IPackageSearchMetadata>();
             var packageNameLower = packageName.ToLowerSafe();
 
             foreach (var resource in resources)
             {
-                if (version is null)
+                if (version is null && versionLimit is null)
                 {
                     // We can only use the optimized ListResource query when the user has asked us to, via the UsePackageRepositoryOptimizations
                     // feature, as well as when a ListResource exists for the feed in question.  Some technologies, such as Sleet or Baget, only
@@ -434,6 +442,19 @@ namespace chocolatey.infrastructure.app.nuget
 
                         packagesList.AddRange(packages);
                     }
+                }
+                else if (version is null)
+                {
+                    var packages = FaultTolerance.TryCatchWithLoggingException(
+                        () =>
+                        resource.PackageMetadataResource.GetMetadataAsync(packageNameLower, includePrerelease: config.Prerelease, includeUnlisted: false, cacheContext, nugetLogger, CancellationToken.None).GetAwaiter().GetResult(),
+                        errorMessage: "Unable to connect to source '{0}'".FormatWith(resource.Source.PackageSource.Source),
+                        throwError: false,
+                        logWarningInsteadOfError: true);
+
+                    var satisfiedPackages = packages.Where(p => versionLimit.Satisfies(p.Identity.Version));
+
+                    packagesList.AddRange(satisfiedPackages);
                 }
                 else
                 {
