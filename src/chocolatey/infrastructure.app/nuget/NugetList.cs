@@ -84,19 +84,33 @@ namespace chocolatey.infrastructure.app.nuget
                 OrderBy = GetSortOrder(configuration.ListCommand.OrderBy, configuration.AllVersions || !(version is null), configuration.RegularOutput && !configuration.QuietOutput)
             };
 
-            if (configuration.ListCommand.ByIdOnly)
+            if (configuration.Features.UsePackageRepositoryOptimizations)
             {
-                searchFilter.ByIdOnly = true;
+                searchFilter.OrderBy = SearchOrderBy.DownloadCount;
             }
 
-            if (configuration.ListCommand.ByTagOnly)
+            if (configuration.Features.UsePackageRepositoryOptimizations)
             {
-                searchFilter.ByTagOnly = true;
-            }
+                if (configuration.ListCommand.ByIdOnly)
+                {
+                    searchFilter.ByIdOnly = true;
+                }
+
+                if (configuration.ListCommand.ByTagOnly)
+                {
+                    searchFilter.ByTagOnly = true;
+                }
 
             if (configuration.ListCommand.IdStartsWith)
             {
                 searchFilter.IdStartsWith = true;
+            }
+
+            NuGetVersion version = !string.IsNullOrWhiteSpace(configuration.Version) ? NuGetVersion.Parse(configuration.Version) : null;
+
+            if (version != null)
+            {
+                searchFilter.OrderBy = SearchOrderBy.Version;
             }
 
             var results = new HashSet<IPackageSearchMetadata>(new ComparePackageSearchMetadata());
@@ -169,8 +183,8 @@ namespace chocolatey.infrastructure.app.nuget
                             skipNumber += takeNumber;
                             perSourceThresholdLimit -= partResults.Count;
                             perSourceThresholdMinLimit -= partResults.Count;
-                            latestResults.AddRange(partResults);
-                        } while (partResults.Count >= takeNumber && skipNumber < totalToGet);
+                            latestResults.AddRange(ApplyFilters(partResults, version, searchTermLower, configuration));
+                        } while (partResults.Count >= takeNumber && latestResults.Count + takeNumber < totalToGet);
 
                         ThresholdHit = ThresholdHit || perSourceThresholdLimit <= 0;
                         LowerThresholdHit = LowerThresholdHit || perSourceThresholdMinLimit <= 0;
@@ -237,6 +251,11 @@ namespace chocolatey.infrastructure.app.nuget
                                 continue;
                             }
 
+                            if (!IsAcceptedPackage(enumerator.Current, version, searchTermLower, configuration))
+                            {
+                                continue;
+                            }
+
                             if (skipNumber > 0)
                             {
                                 skipNumber--;
@@ -286,43 +305,59 @@ namespace chocolatey.infrastructure.app.nuget
                 }
             }
 
-            if (version != null)
+            results = ApplyFilters(results, version, searchTermLower, configuration).ToHashSet();
+
+            results = configuration.ListCommand.OrderByPopularity ?
+                 results.OrderByDescending(p => p.DownloadCount).ThenBy(p => p.Identity.Id).ToHashSet()
+                 : results.OrderBy(p => p.Identity.Id).ThenByDescending(p => p.Identity.Version).ToHashSet();
+
+            return results.AsQueryable();
+        }
+
+        private static bool IsAcceptedPackage(IPackageSearchMetadata package, NuGetVersion version, string searchTerm, ChocolateyConfiguration configuration)
+        {
+            if (version != null && !package.Identity.Version.Equals(version))
             {
-                results = results.Where(p => p.Identity.Version.Equals(version)).ToHashSet();
+                return false;
             }
 
             if (configuration.ListCommand.IdStartsWith)
             {
-                results = results.Where(p => p.Identity.Id.ToLower().StartsWith(searchTermLower)).ToHashSet();
+                if (!package.Identity.Id.ToLowerSafe().StartsWith(searchTerm))
+                {
+                    return false;
+                }
             }
-            else if (configuration.ListCommand.ByIdOnly)
+            else if (configuration.ListCommand.ByIdOnly && !package.Identity.Id.ContainsSafe(searchTerm))
             {
-                results = results.Where(p => p.Identity.Id.ToLower().Contains(searchTermLower)).ToHashSet();
-            }
-
-            if (configuration.ListCommand.ByTagOnly)
-            {
-                results = results.Where(p => p.Tags.ContainsSafe(searchTermLower, StringComparison.InvariantCultureIgnoreCase)).ToHashSet();
+                return false;
             }
 
-            if (configuration.ListCommand.ApprovedOnly)
+            if (configuration.ListCommand.ByTagOnly && !package.Tags.ContainsSafe(searchTerm, StringComparison.InvariantCultureIgnoreCase))
             {
-                results = results.Where(p => p.IsApproved).ToHashSet();
+                return false;
             }
 
-            if (configuration.ListCommand.DownloadCacheAvailable)
+            if (configuration.ListCommand.ApprovedOnly && !package.IsApproved)
             {
-                results = results.Where(p => p.IsDownloadCacheAvailable).ToHashSet();
+                return false;
             }
 
-            if (configuration.ListCommand.NotBroken)
+            if (configuration.ListCommand.DownloadCacheAvailable && !package.IsDownloadCacheAvailable)
             {
-                results = results.Where(p => (p.IsDownloadCacheAvailable && configuration.Information.IsLicensedVersion) || p.PackageTestResultStatus != "Failing").ToHashSet();
+                return false;
+            }
+
+            if (configuration.ListCommand.NotBroken && ((package.IsDownloadCacheAvailable && configuration.Information.IsLicensedVersion) || package.PackageTestResultStatus != "Failing"))
+            {
+                return false;
             }
 
             results = ApplyPackageSort(results, configuration.ListCommand.OrderBy).ToHashSet();
 
-            return results.AsQueryable();
+        private static IEnumerable<IPackageSearchMetadata> ApplyFilters(IEnumerable<IPackageSearchMetadata> searchResults, NuGetVersion version, string searchTerm, ChocolateyConfiguration configuration)
+        {
+            return searchResults.Where(p => IsAcceptedPackage(p, version, searchTerm, configuration));
         }
 
         private static int GetTakeAmount(ChocolateyConfiguration configuration)
