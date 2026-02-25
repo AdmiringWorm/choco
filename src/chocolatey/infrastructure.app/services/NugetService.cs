@@ -873,186 +873,193 @@ Please see https://docs.chocolatey.org/en-us/troubleshooting for more
 
                 foreach (SourcePackageDependencyInfo packageDependencyInfo in resolvedPackages)
                 {
-                    // Don't attempt to action this package if dependencies failed.
-                    if (packageDependencyInfo != null && packageResultsToReturn.Any(r => r.Value.Success != true && packageDependencyInfo.Dependencies.Any(d => d.Id.Equals(r.Value.Identity.Id, StringComparison.OrdinalIgnoreCase))))
+                    try
                     {
-                        var logMessage = StringResources.ErrorMessages.DependencyFailedToInstall.FormatWith(packageDependencyInfo.Id);
-                        packageResultsToReturn
-                            .GetOrAdd(
-                                packageDependencyInfo.Id,
-                                new PackageResult(packageDependencyInfo.Id, packageDependencyInfo.Version.ToFullStringChecked(), string.Empty)
-                            )
-                            .Messages.Add(new ResultMessage(ResultType.Error, logMessage));
-                        this.Log().Error(ChocolateyLoggers.Important, logMessage);
-
-                        if (config.Features.StopOnFirstPackageFailure)
+                        // Don't attempt to action this package if dependencies failed.
+                        if (packageDependencyInfo != null && packageResultsToReturn.Any(r => r.Value.Success != true && packageDependencyInfo.Dependencies.Any(d => IsIdMatch(d.Id, r.Value))))
                         {
-                            throw new ApplicationException("Stopping further execution as {0} has failed install.".FormatWith(packageDependencyInfo.Id));
-                        }
-
-                        continue;
-                    }
-
-                    var packageRemoteMetadata = packagesToInstall.FirstOrDefault(p => p.Identity.Equals(packageDependencyInfo));
-
-                    if (packageRemoteMetadata is null)
-                    {
-                        var endpoint = NuGetEndpointResources.GetResourcesBySource(packageDependencyInfo.Source, sourceCacheContext);
-
-                        packageRemoteMetadata = endpoint.PackageMetadataResource
-                            .GetMetadataAsync(packageDependencyInfo, sourceCacheContext, _nugetLogger, CancellationToken.None)
-                            .GetAwaiter().GetResult();
-                    }
-
-                    var shouldAddForcedResultMessage = false;
-
-                    var packageToUninstall = packagesToUninstall.FirstOrDefault(p => p.PackageMetadata.Id.Equals(packageDependencyInfo.Id, StringComparison.OrdinalIgnoreCase));
-                    if (packageToUninstall != null)
-                    {
-                        // Are we attempting a downgrade? We need to ensure it's allowed...
-                        if (!config.AllowDowngrade && packageToUninstall.Identity.HasVersion && packageDependencyInfo.HasVersion && packageDependencyInfo.Version < packageToUninstall.Identity.Version)
-                        {
-                            var logMessage = StringResources.ErrorMessages.UnableToDowngrade.FormatWith(packageToUninstall.Name, packageToUninstall.Version, Environment.NewLine);
-                            packageResultsToReturn.GetOrAdd(packageToUninstall.Name, packageToUninstall)
+                            var logMessage = StringResources.ErrorMessages.DependencyFailedToInstall.FormatWith(packageDependencyInfo.Id);
+                            packageResultsToReturn
+                                .GetOrAdd(
+                                    packageDependencyInfo.Id,
+                                    new PackageResult(packageDependencyInfo.Id, packageDependencyInfo.Version.ToFullStringChecked(), string.Empty)
+                                )
                                 .Messages.Add(new ResultMessage(ResultType.Error, logMessage));
                             this.Log().Error(ChocolateyLoggers.Important, logMessage);
 
                             if (config.Features.StopOnFirstPackageFailure)
                             {
-                                throw new ApplicationException("Stopping further execution as {0} has failed install.".FormatWith(packageToUninstall.Identity.Id));
+                                throw new ApplicationException("Stopping further execution as {0} has failed install.".FormatWith(packageDependencyInfo.Id));
                             }
 
                             continue;
                         }
 
-                        shouldAddForcedResultMessage = true;
-                        BackupAndRunBeforeModify(packageToUninstall, config, beforeModifyAction);
-                        packageToUninstall.InstallLocation = pathResolver.GetInstallPath(packageToUninstall.Identity);
+                        var packageRemoteMetadata = packagesToInstall.FirstOrDefault(p => p.Identity.Equals(packageDependencyInfo));
+
+                        if (packageRemoteMetadata is null)
+                        {
+                            var endpoint = NuGetEndpointResources.GetResourcesBySource(packageDependencyInfo.Source, sourceCacheContext);
+
+                            packageRemoteMetadata = endpoint.PackageMetadataResource
+                                .GetMetadataAsync(packageDependencyInfo, sourceCacheContext, _nugetLogger, CancellationToken.None)
+                                .GetAwaiter().GetResult();
+                        }
+
+                        var shouldAddForcedResultMessage = false;
+
+                        var packageToUninstall = packagesToUninstall.FirstOrDefault(p => p.PackageMetadata.Id.Equals(packageDependencyInfo.Id, StringComparison.OrdinalIgnoreCase));
+                        if (packageToUninstall != null)
+                        {
+                            // Are we attempting a downgrade? We need to ensure it's allowed...
+                            if (!config.AllowDowngrade && packageToUninstall.Identity.HasVersion && packageDependencyInfo.HasVersion && packageDependencyInfo.Version < packageToUninstall.Identity.Version)
+                            {
+                                var logMessage = StringResources.ErrorMessages.UnableToDowngrade.FormatWith(packageToUninstall.Name, packageToUninstall.Version, Environment.NewLine);
+                                packageResultsToReturn.GetOrAdd(packageToUninstall.Name, packageToUninstall)
+                                    .Messages.Add(new ResultMessage(ResultType.Error, logMessage));
+                                this.Log().Error(ChocolateyLoggers.Important, logMessage);
+
+                                if (config.Features.StopOnFirstPackageFailure)
+                                {
+                                    throw new ApplicationException("Stopping further execution as {0} has failed install.".FormatWith(packageToUninstall.Identity.Id));
+                                }
+
+                                continue;
+                            }
+
+                            shouldAddForcedResultMessage = true;
+                            BackupAndRunBeforeModify(packageToUninstall, config, beforeModifyAction);
+                            packageToUninstall.InstallLocation = pathResolver.GetInstallPath(packageToUninstall.Identity);
+                            try
+                            {
+                                // This deletes satellite files and stuff
+                                //But it does not throw or return false if it fails to delete something...
+                                var ableToDelete = nugetProject.DeletePackage(packageToUninstall.Identity, projectContext, CancellationToken.None, shouldDeleteDirectory: false).GetAwaiter().GetResult();
+                                //So removing directly manually so as to throw if needed.
+                                _fileSystem.DeleteDirectoryChecked(packageToUninstall.InstallLocation, true, true, true);
+                                RemovePackageFromCache(config, packageToUninstall.PackageMetadata);
+                            }
+                            catch (Exception ex)
+                            {
+                                var forcedResult = packageResultsToReturn.GetOrAdd(packageToUninstall.Name, packageToUninstall);
+                                forcedResult.Messages.Add(new ResultMessage(ResultType.Note, "Backing up and removing old version"));
+                                var logMessage = "{0}:{1} {2}".FormatWith("Unable to remove existing package prior to forced reinstall", Environment.NewLine, ex.Message);
+                                this.Log().Warn(logMessage);
+                                forcedResult.Messages.Add(new ResultMessage(ResultType.Inconclusive, logMessage));
+                                forcedResult.Messages.Add(new ResultMessage(ResultType.Error, logMessage));
+                                if (continueAction != null)
+                                {
+                                    continueAction.Invoke(forcedResult, config);
+                                }
+
+                                continue;
+                            }
+                        }
+
+
                         try
                         {
-                            // This deletes satellite files and stuff
-                            //But it does not throw or return false if it fails to delete something...
-                            var ableToDelete = nugetProject.DeletePackage(packageToUninstall.Identity, projectContext, CancellationToken.None, shouldDeleteDirectory: false).GetAwaiter().GetResult();
-                            //So removing directly manually so as to throw if needed.
-                            _fileSystem.DeleteDirectoryChecked(packageToUninstall.InstallLocation, true, true, true);
-                            RemovePackageFromCache(config, packageToUninstall.PackageMetadata);
-                        }
-                        catch (Exception ex)
-                        {
-                            var forcedResult = packageResultsToReturn.GetOrAdd(packageToUninstall.Name, packageToUninstall);
-                            forcedResult.Messages.Add(new ResultMessage(ResultType.Note, "Backing up and removing old version"));
-                            var logMessage = "{0}:{1} {2}".FormatWith("Unable to remove existing package prior to forced reinstall", Environment.NewLine, ex.Message);
-                            this.Log().Warn(logMessage);
-                            forcedResult.Messages.Add(new ResultMessage(ResultType.Inconclusive, logMessage));
-                            forcedResult.Messages.Add(new ResultMessage(ResultType.Error, logMessage));
-                            if (continueAction != null)
+                            //TODO, do sanity check here.
+                            var endpoint = NuGetEndpointResources.GetResourcesBySource(packageDependencyInfo.Source, sourceCacheContext);
+                            var downloadResource = endpoint.DownloadResource;
+
+                            _fileSystem.DeleteFile(pathResolver.GetInstalledPackageFilePath(packageDependencyInfo));
+
+                            this.Log().Info("Downloading package from source '{0}'".FormatWith(packageDependencyInfo.Source));
+                            this.Log().Debug("Package download location '{0}'".FormatWith(packageDependencyInfo.DownloadUri));
+
+                            ChocolateyProgressInfo.ShouldDisplayDownloadProgress = config.Features.ShowDownloadProgress;
+
+                            using (var downloadResult = downloadResource.GetDownloadResourceResultAsync(
+                                       packageDependencyInfo,
+                                       new PackageDownloadContext(sourceCacheContext),
+                                       NuGetEnvironment.GetFolderPath(NuGetFolderPath.Temp),
+                                       _nugetLogger, CancellationToken.None).GetAwaiter().GetResult())
                             {
-                                continueAction.Invoke(forcedResult, config);
+                                ValidatePackageHash(config, packageDependencyInfo, downloadResult);
+
+                                nugetProject.InstallPackageAsync(
+                                    packageDependencyInfo,
+                                    downloadResult,
+                                    projectContext,
+                                    CancellationToken.None).GetAwaiter().GetResult();
+
                             }
 
-                            continue;
-                        }
-                    }
+                            var installedPath = nugetProject.GetInstalledPath(packageDependencyInfo);
+                            NormalizeNuspecCasing(packageRemoteMetadata, installedPath);
 
+                            RemovePackageFromNugetCache(packageRemoteMetadata);
 
-                    try
-                    {
-                        //TODO, do sanity check here.
-                        var endpoint = NuGetEndpointResources.GetResourcesBySource(packageDependencyInfo.Source, sourceCacheContext);
-                        var downloadResource = endpoint.DownloadResource;
+                            var manifestPath = nugetProject.GetInstalledManifestFilePath(packageDependencyInfo);
+                            var packageMetadata = new ChocolateyPackageMetadata(manifestPath, _fileSystem);
 
-                        _fileSystem.DeleteFile(pathResolver.GetInstalledPackageFilePath(packageDependencyInfo));
+                            this.Log().Info(ChocolateyLoggers.Important, "{0}{1} v{2}{3}{4}{5}".FormatWith(
+                                System.Environment.NewLine,
+                                packageMetadata.Id,
+                                packageMetadata.Version.ToFullStringChecked(),
+                                config.Force ? " (forced)" : string.Empty,
+                                packageRemoteMetadata.IsApproved ? " [Approved]" : string.Empty,
+                                packageRemoteMetadata.PackageTestResultStatus == "Failing" && packageRemoteMetadata.IsDownloadCacheAvailable ? " - Likely broken for FOSS users (due to download location changes)" : packageRemoteMetadata.PackageTestResultStatus == "Failing" ? " - Possibly broken" : string.Empty
+                            ));
 
-                        this.Log().Info("Downloading package from source '{0}'".FormatWith(packageDependencyInfo.Source));
-                        this.Log().Debug("Package download location '{0}'".FormatWith(packageDependencyInfo.DownloadUri));
+                            var packageResult = packageResultsToReturn.GetOrAdd(packageDependencyInfo.Id.ToLowerSafe(), new PackageResult(packageMetadata, packageRemoteMetadata, installedPath, null, packageDependencyInfo.Source.ToStringSafe()));
+                            if (shouldAddForcedResultMessage)
+                            {
+                                packageResult.Messages.Add(new ResultMessage(ResultType.Note, "Backing up and removing old version"));
+                            }
 
-                        ChocolateyProgressInfo.ShouldDisplayDownloadProgress = config.Features.ShowDownloadProgress;
+                            packageResult.InstallLocation = installedPath;
+                            packageResult.Messages.Add(new ResultMessage(ResultType.Debug, ApplicationParameters.Messages.ContinueChocolateyAction));
 
-                        using (var downloadResult = downloadResource.GetDownloadResourceResultAsync(
-                                   packageDependencyInfo,
-                                   new PackageDownloadContext(sourceCacheContext),
-                                   NuGetEnvironment.GetFolderPath(NuGetFolderPath.Temp),
-                                   _nugetLogger, CancellationToken.None).GetAwaiter().GetResult())
-                        {
-                            ValidatePackageHash(config, packageDependencyInfo, downloadResult);
-
-                            nugetProject.InstallPackageAsync(
-                                packageDependencyInfo,
-                                downloadResult,
-                                projectContext,
-                                CancellationToken.None).GetAwaiter().GetResult();
-
-                        }
-
-                        var installedPath = nugetProject.GetInstalledPath(packageDependencyInfo);
-                        NormalizeNuspecCasing(packageRemoteMetadata, installedPath);
-
-                        RemovePackageFromNugetCache(packageRemoteMetadata);
-
-                        var manifestPath = nugetProject.GetInstalledManifestFilePath(packageDependencyInfo);
-                        var packageMetadata = new ChocolateyPackageMetadata(manifestPath, _fileSystem);
-
-                        this.Log().Info(ChocolateyLoggers.Important, "{0}{1} v{2}{3}{4}{5}".FormatWith(
-                            System.Environment.NewLine,
-                            packageMetadata.Id,
-                            packageMetadata.Version.ToFullStringChecked(),
-                            config.Force ? " (forced)" : string.Empty,
-                            packageRemoteMetadata.IsApproved ? " [Approved]" : string.Empty,
-                            packageRemoteMetadata.PackageTestResultStatus == "Failing" && packageRemoteMetadata.IsDownloadCacheAvailable ? " - Likely broken for FOSS users (due to download location changes)" : packageRemoteMetadata.PackageTestResultStatus == "Failing" ? " - Possibly broken" : string.Empty
-                        ));
-
-                        var packageResult = packageResultsToReturn.GetOrAdd(packageDependencyInfo.Id.ToLowerSafe(), new PackageResult(packageMetadata, packageRemoteMetadata, installedPath, null, packageDependencyInfo.Source.ToStringSafe()));
-                        if (shouldAddForcedResultMessage)
-                        {
-                            packageResult.Messages.Add(new ResultMessage(ResultType.Note, "Backing up and removing old version"));
-                        }
-
-                        packageResult.InstallLocation = installedPath;
-                        packageResult.Messages.Add(new ResultMessage(ResultType.Debug, ApplicationParameters.Messages.ContinueChocolateyAction));
-
-                        var elementsList = _ruleService.ValidateRules(manifestPath)
+                            var elementsList = _ruleService.ValidateRules(manifestPath)
                             .Where(r => r.Severity == infrastructure.rules.RuleType.Error && !string.IsNullOrEmpty(r.Id))
                             .WhereUnsupportedOrDeprecated()
                             .Select(r => "{0}: {1}".FormatWith(r.Id, r.Message))
                             .ToList();
 
-                        if (elementsList.Count > 0)
-                        {
-                            var message = "Issues found with nuspec elements\r\n" + elementsList.Join("\r\n");
-                            packageResult.Messages.Add(new ResultMessage(ResultType.Warn, message));
-                        }
+                            if (elementsList.Count > 0)
+                            {
+                                var message = "Issues found with nuspec elements\r\n" + elementsList.Join("\r\n");
+                                packageResult.Messages.Add(new ResultMessage(ResultType.Warn, message));
+                            }
 
-                        if (continueAction != null)
+                            if (continueAction != null)
+                            {
+                                continueAction.Invoke(packageResult, config);
+                            }
+                        }
+                        catch (Exception ex)
                         {
-                            continueAction.Invoke(packageResult, config);
+                            var message = ex.Message;
+                            var webException = ex as System.Net.WebException;
+                            if (webException != null)
+                            {
+                                var response = webException.Response as HttpWebResponse;
+                                if (response != null && !string.IsNullOrWhiteSpace(response.StatusDescription))
+                                {
+                                    message += " {0}".FormatWith(response.StatusDescription);
+                                }
+                            }
+
+                            var logMessage = "{0} not installed. An error occurred during installation:{1} {2}".FormatWith(packageDependencyInfo.Id, Environment.NewLine, message);
+                            this.Log().Error(ChocolateyLoggers.Important, logMessage);
+                            var errorResult = packageResultsToReturn.GetOrAdd(packageDependencyInfo.Id, new PackageResult(packageDependencyInfo.Id, version.ToFullStringChecked(), null));
+                            errorResult.Messages.Add(new ResultMessage(ResultType.Error, logMessage));
+                            if (errorResult.ExitCode == 0)
+                            {
+                                errorResult.ExitCode = 1;
+                            }
+
+                            if (continueAction != null)
+                            {
+                                continueAction.Invoke(errorResult, config);
+                            }
                         }
                     }
                     catch (Exception ex)
                     {
-                        var message = ex.Message;
-                        var webException = ex as System.Net.WebException;
-                        if (webException != null)
-                        {
-                            var response = webException.Response as HttpWebResponse;
-                            if (response != null && !string.IsNullOrWhiteSpace(response.StatusDescription))
-                            {
-                                message += " {0}".FormatWith(response.StatusDescription);
-                            }
-                        }
-
-                        var logMessage = "{0} not installed. An error occurred during installation:{1} {2}".FormatWith(packageDependencyInfo.Id, Environment.NewLine, message);
-                        this.Log().Error(ChocolateyLoggers.Important, logMessage);
-                        var errorResult = packageResultsToReturn.GetOrAdd(packageDependencyInfo.Id, new PackageResult(packageDependencyInfo.Id, version.ToFullStringChecked(), null));
-                        errorResult.Messages.Add(new ResultMessage(ResultType.Error, logMessage));
-                        if (errorResult.ExitCode == 0)
-                        {
-                            errorResult.ExitCode = 1;
-                        }
-
-                        if (continueAction != null)
-                        {
-                            continueAction.Invoke(errorResult, config);
-                        }
+                        throw;
                     }
                 }
             }
@@ -1063,6 +1070,23 @@ Please see https://docs.chocolatey.org/en-us/troubleshooting for more
             config.RevertChanges(removeBackup: true);
 
             return packageResultsToReturn;
+        }
+
+        private bool IsIdMatch(string id, PackageResult value)
+        {
+            try
+            {
+                return string.Equals(id, value.Identity.Id, StringComparison.OrdinalIgnoreCase);
+            }
+            catch
+            {
+                // We need to have an empty catch block.
+                // If the Identity is throwing an exception
+                // which it may to in some cases, everything may
+                // become aborted, so instead we catch the exception
+                // and return false.
+                return false;
+            }
         }
 
         protected virtual string GetDependencyResolutionErrorMessage(NuGetResolverConstraintException exception)
