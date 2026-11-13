@@ -10,8 +10,13 @@
     example 2.8.0 for release/2.8.0), otherwise the line (1.x or 2.x). A label or milestone that
     does not exist in the repository is skipped with a warning.
 
-    With -IssueNumber, rewrites that issue's title and description for the new version, and adds a
-    comment saying which version it moved from. Labels and milestone are left alone.
+    With -IssueNumber, moves that issue to the new version: a new title, the previous version
+    replaced by the new one in its description (except in the problem section, which describes the
+    situation when the issue was opened), the marker moved to the new version, and a comment saying
+    which version it moved from. The rest of the description, including any edits, is kept. It also
+    adds the Dependency Change label when the
+    issue does not have it, and sets the milestone when the issue has none, so a milestone a
+    maintainer has set is kept.
 
     The description carries the hidden marker Find-7zipUpdateItem.ps1 looks for. Use -WhatIf to see
     the title and description without changing anything. Needs the GitHub CLI (gh), signed in or
@@ -36,7 +41,8 @@
     The open issue to update. Leave it out to create a new issue.
 
 .PARAMETER PreviousVersion
-    The version the open issue names today, for the comment added when it is updated.
+    The version the open issue names today. Needed with -IssueNumber: it is the version replaced in
+    the description, and named in the comment.
 
 .EXAMPLE
     ./.github/scripts/Set-7zipUpdateIssue.ps1 -Line 2.x -TargetBranch develop -BundledVersion 26.05 -WhatIf
@@ -107,19 +113,67 @@ $body = @(
     "<!-- 7zip-update line=$Line version=$Version -->"
 ) -join "`n"
 
+$label = 'Dependency Change'
+$milestone = if ($TargetBranch -match '^(hotfix|release)/(?<version>\d+(\.\d+)+)$') { $Matches.version } else { $Line }
+
+$labels = gh api --paginate "repos/$Repository/labels?per_page=100" --jq '.[].name'
+$milestones = gh api --paginate "repos/$Repository/milestones?state=open&per_page=100" --jq '.[].title'
+
+if ($labels -notcontains $label) {
+    Write-Warning "The '$label' label does not exist in $Repository, so it is not added to the issue."
+    $label = $null
+}
+
+if ($milestones -notcontains $milestone) {
+    Write-Warning "The '$milestone' milestone does not exist in $Repository, so it is not set on the issue."
+    $milestone = $null
+}
+
 if ($IssueNumber) {
-    $comment = if ($PreviousVersion) {
-        "7-Zip $Version was released, so this issue now covers $Version instead of $PreviousVersion."
+    if (-not $PreviousVersion) {
+        throw '-PreviousVersion is needed with -IssueNumber, to know which version to replace in the issue description.'
+    }
+
+    $comment = "7-Zip $Version was released, so this issue now covers $Version instead of $PreviousVersion."
+    $current = gh issue view $IssueNumber --repo $Repository --json body,labels,milestone | ConvertFrom-Json
+
+    # Keep the description as it is, so the problem statement and any edits stay. Only the previous
+    # version is replaced, outside the problem section, and the marker moves to the new version.
+    $problemHeading = '### Is Your Feature Request Related To A Problem?'
+    $previousVersionPattern = "(?<!\d|\d\.)$([regex]::Escape($PreviousVersion))(?!\d|\.\d)"
+    $sections = [regex]::Split($current.body, '(?m)^(?=### )')
+
+    $body = ($sections | ForEach-Object {
+        if ($_.StartsWith($problemHeading)) {
+            $_
+        } else {
+            $_ -replace $previousVersionPattern, $Version
+        }
+    }) -join ''
+
+    $body = $body -replace '<!--\s*7zip-update\s+line=\S+\s+version=[\d.]+\s*-->', "<!-- 7zip-update line=$Line version=$Version -->"
+
+    # Only add what is missing, so a milestone a maintainer has set is kept
+    $arguments = @($IssueNumber, '--repo', $Repository, '--title', $title, '--body-file', '-')
+
+    if ($label -and $current.labels.name -notcontains $label) {
+        $arguments += '--add-label', $label
     } else {
-        "7-Zip $Version was released, so this issue now covers $Version."
+        $label = $null
+    }
+
+    if ($milestone -and -not $current.milestone) {
+        $arguments += '--milestone', $milestone
+    } else {
+        $milestone = $null
     }
 
     if ($PSCmdlet.ShouldProcess("$Repository#$IssueNumber", "Update the issue to 7-Zip $Version")) {
-        $body | gh issue edit $IssueNumber --repo $Repository --title $title --body-file - | Out-Null
+        $body | gh issue edit @arguments | Out-Null
         gh issue comment $IssueNumber --repo $Repository --body $comment | Out-Null
         Write-Host "Updated issue #$IssueNumber to 7-Zip Version $Version."
     } else {
-        Write-Host "Title: $title`n`n$body`n`nComment: $comment"
+        Write-Host "Title: $title`nAdds label: $(if ($label) { $label } else { '(none)' })`nSets milestone: $(if ($milestone) { $milestone } else { '(none)' })`n`n$body`n`nComment: $comment"
     }
 
     return [pscustomobject] @{
@@ -128,29 +182,18 @@ if ($IssueNumber) {
     }
 }
 
-$milestone = if ($TargetBranch -match '^(hotfix|release)/(?<version>\d+(\.\d+)+)$') { $Matches.version } else { $Line }
-$label = 'Dependency Change'
-
 $arguments = @('--repo', $Repository, '--title', $title, '--body-file', '-')
-$labels = gh api --paginate "repos/$Repository/labels?per_page=100" --jq '.[].name'
-$milestones = gh api --paginate "repos/$Repository/milestones?state=open&per_page=100" --jq '.[].title'
 
-if ($labels -contains $label) {
+if ($label) {
     $arguments += '--label', $label
-} else {
-    Write-Warning "The '$label' label does not exist in $Repository, so the issue is created without it."
-    $label = '(none)'
 }
 
-if ($milestones -contains $milestone) {
+if ($milestone) {
     $arguments += '--milestone', $milestone
-} else {
-    Write-Warning "The '$milestone' milestone does not exist in $Repository, so the issue is created without one."
-    $milestone = '(none)'
 }
 
 if (-not $PSCmdlet.ShouldProcess($Repository, "Create the $Line issue for 7-Zip $Version")) {
-    Write-Host "Title: $title`nLabel: $label`nMilestone: $milestone`n`n$body"
+    Write-Host "Title: $title`nLabel: $(if ($label) { $label } else { '(none)' })`nMilestone: $(if ($milestone) { $milestone } else { '(none)' })`n`n$body"
 
     return [pscustomobject] @{
         Number = $null
