@@ -9,7 +9,8 @@
     from the target branch every time. Then, without -PullRequestNumber, creates a pull request
     from it into the target branch. With -PullRequestNumber, moves that pull request to the new
     version: new title and description, its base set to the target branch, and a comment saying
-    which version it moved from.
+    which version it moved from. The update uses the REST API rather than gh pr edit, so a classic
+    token needs no read:org scope.
 
     The description follows the Chocolatey pull request template, lists the files changed in the
     work branch's last commit, closes the issue with Fixes #<issue>, and carries the hidden marker
@@ -155,8 +156,9 @@ $body = @(
 ) -join "`n"
 
 # TODO: Request a review from the people who maintain Chocolatey CLI, once it is decided who that
-# is (named maintainers or a team), for example with --reviewer on gh pr create and --add-reviewer
-# on gh pr edit.
+# is (named maintainers or a team), for example with the REST API
+# (POST repos/<owner>/<repo>/pulls/<number>/requested_reviewers). Avoid gh pr edit --add-reviewer,
+# which needs the read:org scope on a classic token.
 
 if ($PSCmdlet.ShouldProcess("$Repository $workBranch", 'Force-push the work branch')) {
     Push-Location -LiteralPath $Path
@@ -181,8 +183,16 @@ if ($PullRequestNumber) {
         }
     }
 
-    $body | gh pr edit $PullRequestNumber --repo $Repository --title $title --base $TargetBranch --body-file - | Out-Null
-    gh pr comment $PullRequestNumber --repo $Repository --body $comment | Out-Null
+    # The REST API, not gh pr edit: gh pr edit also reads the reviewer teams, which needs the
+    # read:org scope on a classic token. These two calls only need access to the repository.
+    $update = @{
+        title = $title
+        body  = $body
+        base  = $TargetBranch
+    }
+
+    $update | ConvertTo-Json -Compress | gh api --method PATCH "repos/$Repository/pulls/$PullRequestNumber" --input - | Out-Null
+    @{ body = $comment } | ConvertTo-Json -Compress | gh api --method POST "repos/$Repository/issues/$PullRequestNumber/comments" --input - | Out-Null
     Write-Host "Updated pull request #$PullRequestNumber to 7-Zip Version $Version."
 
     return [pscustomobject] @{
