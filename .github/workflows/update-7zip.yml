@@ -173,3 +173,20 @@ jobs:
           "work-branch=$($update.WorkBranch)" >> $env:GITHUB_OUTPUT
           "changed=$($update.Changed.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
           "changed-files=$(ConvertTo-Json -InputObject @($update.ChangedFiles) -Compress)" >> $env:GITHUB_OUTPUT
+
+      # Commits the staged update as the account behind the update token, with the issue number
+      # as the subject prefix. Nothing is pushed here.
+      - name: Commit the update for ${{ matrix.line }}
+        id: commit
+        if: steps.update.outputs.changed == 'true'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.UPDATE_7ZIP_TOKEN }}
+          VERSION: ${{ needs.check-version.outputs.version }}
+          ISSUE_NUMBER: ${{ steps.issue.outputs.number }}
+          BUNDLED_VERSION: ${{ steps.target.outputs.bundled-version }}
+        run: |
+          $commit = ./.github/scripts/New-7zipUpdateCommit.ps1 -Path target -IssueNumber $env:ISSUE_NUMBER -BundledVersion $env:BUNDLED_VERSION -Version $env:VERSION
+
+          "commit=$($commit.Commit)" >> $env:GITHUB_OUTPUT
+          "subject=$($commit.Subject)" >> $env:GITHUB_OUTPUT
