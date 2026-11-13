@@ -14,6 +14,7 @@ permissions:
 jobs:
   # Find the latest 7-Zip release, and whether the branch the workflow runs on already bundles it.
   # A scheduled run uses the default branch; a manual run uses the branch it was started from.
+  # Runs from the 1.x branches (support/1.x, hotfix/1* and release/1*) are refused.
   check-version:
     runs-on: ubuntu-latest
     outputs:
@@ -28,6 +29,10 @@ jobs:
           BRANCH: ${{ github.ref_name }}
         run: |
           $PSNativeCommandUseErrorActionPreference = $true
+
+          if ($env:BRANCH -match '^(support/1\.x$|hotfix/1|release/1)') {
+              throw "The workflow cannot run from the '$env:BRANCH' branch. Run it from develop or another 2.x branch instead."
+          }
 
           $latestVersion = gh api repos/ip7z/7zip/releases/latest --jq '.tag_name'
           Write-Host "The latest 7-Zip release on GitHub is Version $latestVersion."
@@ -64,9 +69,10 @@ jobs:
           - line: 1.x
             major: 1
             fallback-branch: support/1.x
+          # The branch the workflow runs on; check-version refuses 1.x branches
           - line: 2.x
             major: 2
-            fallback-branch: develop
+            fallback-branch: ${{ github.ref_name }}
     steps:
       # Hotfix branches first, then release branches, then the line's fallback branch.
       # When there is more than one hotfix or release branch, the highest version wins.
