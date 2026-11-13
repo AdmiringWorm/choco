@@ -129,3 +129,87 @@ jobs:
           "branch=$targetBranch" >> $env:GITHUB_OUTPUT
           "bundled-version=$bundledVersion" >> $env:GITHUB_OUTPUT
           "up-to-date=$($upToDate.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
+
+      # The workflow's issue and pull request carry a hidden marker naming the line and version,
+      # for example <!-- 7zip-update line=2.x version=26.06 -->. Only open items are considered.
+      - name: Find the open issue and pull request for ${{ matrix.line }}
+        id: existing
+        if: steps.target.outputs.up-to-date == 'false'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.check-version.outputs.version }}
+          LINE: ${{ matrix.line }}
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+
+          $markerPattern = "<!--\s*7zip-update\s+line=$([regex]::Escape($env:LINE))\s+version=(?<version>[\d.]+)\s*-->"
+
+          function Find-MarkedItem {
+              param(
+                  [string] $Kind,
+                  [object[]] $Items
+              )
+
+              $found = @($Items | Where-Object { $_.body -match $markerPattern })
+
+              if ($found.Count -gt 1) {
+                  throw "Found $($found.Count) open $($Kind)s for $env:LINE (#$($found.number -join ', #')). Close all but one, then run the workflow again."
+              }
+
+              if ($found.Count -eq 0) {
+                  Write-Host "There is no open $Kind for $env:LINE."
+                  return $null
+              }
+
+              $null = $found[0].body -match $markerPattern
+              $item = [pscustomobject] @{
+                  Number  = $found[0].number
+                  Version = $Matches.version
+                  Base    = $found[0].base
+              }
+
+              Write-Host "Found the open $Kind #$($item.Number) for $env:LINE, naming 7-Zip Version $($item.Version)."
+              return $item
+          }
+
+          function Get-Action {
+              param(
+                  [object] $Item
+              )
+
+              if (-not $Item) {
+                  return 'create'
+              }
+
+              if ([version] $Item.Version -eq [version] $env:VERSION) {
+                  return 'none'
+              }
+
+              return 'update'
+          }
+
+          $issues = gh api --paginate "repos/$env:GITHUB_REPOSITORY/issues?state=open&per_page=100" --jq '.[] | select(.pull_request == null) | {number, body}' | ForEach-Object { $_ | ConvertFrom-Json }
+          $pullRequests = gh api --paginate "repos/$env:GITHUB_REPOSITORY/pulls?state=open&per_page=100" --jq '.[] | {number, body, base: .base.ref}' | ForEach-Object { $_ | ConvertFrom-Json }
+
+          $issue = Find-MarkedItem -Kind 'issue' -Items $issues
+          $pullRequest = Find-MarkedItem -Kind 'pull request' -Items $pullRequests
+
+          $issueAction = Get-Action -Item $issue
+          $pullRequestAction = Get-Action -Item $pullRequest
+          $nothingToDo = $issueAction -eq 'none' -and $pullRequestAction -eq 'none'
+
+          if ($nothingToDo) {
+              Write-Host "The open issue and pull request already name 7-Zip Version $env:VERSION, so nothing more is needed for $env:LINE."
+          } else {
+              Write-Host "Issue: $issueAction. Pull request: $pullRequestAction."
+          }
+
+          "issue-number=$($issue.Number)" >> $env:GITHUB_OUTPUT
+          "issue-version=$($issue.Version)" >> $env:GITHUB_OUTPUT
+          "issue-action=$issueAction" >> $env:GITHUB_OUTPUT
+          "pr-number=$($pullRequest.Number)" >> $env:GITHUB_OUTPUT
+          "pr-version=$($pullRequest.Version)" >> $env:GITHUB_OUTPUT
+          "pr-base=$($pullRequest.Base)" >> $env:GITHUB_OUTPUT
+          "pr-action=$pullRequestAction" >> $env:GITHUB_OUTPUT
+          "nothing-to-do=$($nothingToDo.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
