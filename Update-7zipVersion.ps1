@@ -7,6 +7,11 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
+if ($Version -eq 'latest') {
+    $Version = & "$PSScriptRoot/.github/scripts/Get-7zipLatestVersion.ps1"
+    Write-Host "The latest 7-Zip release on GitHub is Version $Version."
+}
+
 $VersionWithoutDots = $Version -replace '\.'
 
 Invoke-WebRequest "https://7-zip.org/a/7z$VersionWithoutDots.exe" -OutFile 7zipInstaller.exe

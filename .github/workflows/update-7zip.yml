@@ -11,6 +11,8 @@ on:
 permissions:
   contents: read
 
+# The logic lives in .github/scripts, so it can also be run by hand. Each step runs a script and
+# turns the object it returns into step outputs.
 jobs:
   # Find the latest 7-Zip release, and whether the branch the workflow runs on already bundles it.
   # A scheduled run uses the default branch; a manual run uses the branch it was started from.
@@ -21,6 +23,11 @@ jobs:
       version: ${{ steps.check.outputs.version }}
       update-needed: ${{ steps.check.outputs.update-needed }}
     steps:
+      - name: Check out the workflow scripts
+        uses: actions/checkout@v4
+        with:
+          sparse-checkout: .github/scripts
+
       - name: Compare the latest 7-Zip release with the current branch
         id: check
         shell: pwsh
@@ -28,34 +35,10 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           BRANCH: ${{ github.ref_name }}
         run: |
-          $PSNativeCommandUseErrorActionPreference = $true
+          $status = ./.github/scripts/Get-7zipUpdateStatus.ps1 -Repository $env:GITHUB_REPOSITORY -Branch $env:BRANCH
 
-          if ($env:BRANCH -match '^(support/1\.x$|hotfix/1|release/1)') {
-              throw "The workflow cannot run from the '$env:BRANCH' branch. Run it from develop or another 2.x branch instead."
-          }
-
-          $latestVersion = gh api repos/ip7z/7zip/releases/latest --jq '.tag_name'
-          Write-Host "The latest 7-Zip release on GitHub is Version $latestVersion."
-
-          $testFile = (gh api --header 'Accept: application/vnd.github.raw' "repos/$env:GITHUB_REPOSITORY/contents/tests/pester-tests/BundledApplications.Tests.ps1?ref=$env:BRANCH") -join "`n"
-
-          if ($testFile -notmatch "Name\s*=\s*'7z'\s*;\s*Version\s*=\s*'(?<bundled>[^']*)'") {
-              throw "Unable to find the 7-Zip version in BundledApplications.Tests.ps1 on the '$env:BRANCH' branch."
-          }
-
-          $bundledVersion = $Matches.bundled
-          Write-Host "The '$env:BRANCH' branch bundles 7-Zip Version $bundledVersion."
-
-          $updateNeeded = [version] $latestVersion -gt [version] $bundledVersion
-
-          if ($updateNeeded) {
-              Write-Host "7-Zip Version $latestVersion is newer, so the bundled 7-Zip needs updating."
-          } else {
-              Write-Host "The bundled 7-Zip is up to date."
-          }
-
-          "version=$latestVersion" >> $env:GITHUB_OUTPUT
-          "update-needed=$($updateNeeded.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
+          "version=$($status.Version)" >> $env:GITHUB_OUTPUT
+          "update-needed=$($status.UpdateNeeded.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
 
   # Update each product line on its own, with one issue and one pull request per line
   update-line:
@@ -67,13 +50,16 @@ jobs:
       matrix:
         include:
           - line: 1.x
-            major: 1
             fallback-branch: support/1.x
           # The branch the workflow runs on; check-version refuses 1.x branches
           - line: 2.x
-            major: 2
             fallback-branch: ${{ github.ref_name }}
     steps:
+      - name: Check out the workflow scripts
+        uses: actions/checkout@v4
+        with:
+          sparse-checkout: .github/scripts
+
       # Hotfix branches first, then release branches, then the line's fallback branch.
       # When there is more than one hotfix or release branch, the highest version wins.
       - name: Find the target branch for ${{ matrix.line }}
@@ -82,53 +68,14 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ needs.check-version.outputs.version }}
-          MAJOR: ${{ matrix.major }}
+          LINE: ${{ matrix.line }}
           FALLBACK_BRANCH: ${{ matrix.fallback-branch }}
         run: |
-          $PSNativeCommandUseErrorActionPreference = $true
+          $target = ./.github/scripts/Get-7zipTargetBranch.ps1 -Repository $env:GITHUB_REPOSITORY -Line $env:LINE -FallbackBranch $env:FALLBACK_BRANCH -Version $env:VERSION
 
-          $branches = gh api --paginate "repos/$env:GITHUB_REPOSITORY/branches" --jq '.[].name'
-          $targetBranch = $null
-
-          foreach ($prefix in 'hotfix', 'release') {
-              $candidates = @($branches | Where-Object { $_ -match "^$prefix/$env:MAJOR(\.\d+){1,3}$" })
-
-              if ($candidates.Count -gt 0) {
-                  $targetBranch = $candidates | Sort-Object { [version] ($_ -replace '^[^/]+/') } -Descending | Select-Object -First 1
-                  break
-              }
-          }
-
-          if (-not $targetBranch) {
-              if ($branches -notcontains $env:FALLBACK_BRANCH) {
-                  throw "There is no hotfix or release branch for $env:MAJOR.x, and the fallback branch '$env:FALLBACK_BRANCH' does not exist."
-              }
-
-              $targetBranch = $env:FALLBACK_BRANCH
-          }
-
-          Write-Host "The target branch is '$targetBranch'."
-
-          $testFile = (gh api --header 'Accept: application/vnd.github.raw' "repos/$env:GITHUB_REPOSITORY/contents/tests/pester-tests/BundledApplications.Tests.ps1?ref=$targetBranch") -join "`n"
-
-          if ($testFile -notmatch "Name\s*=\s*'7z'\s*;\s*Version\s*=\s*'(?<bundled>[^']*)'") {
-              throw "Unable to find the 7-Zip version in BundledApplications.Tests.ps1 on the '$targetBranch' branch."
-          }
-
-          $bundledVersion = $Matches.bundled
-          Write-Host "The '$targetBranch' branch bundles 7-Zip Version $bundledVersion."
-
-          $upToDate = [version] $bundledVersion -ge [version] $env:VERSION
-
-          if ($upToDate) {
-              Write-Host "The '$targetBranch' branch is up to date, so nothing more is needed for this line."
-          } else {
-              Write-Host "The '$targetBranch' branch needs 7-Zip Version $env:VERSION."
-          }
-
-          "branch=$targetBranch" >> $env:GITHUB_OUTPUT
-          "bundled-version=$bundledVersion" >> $env:GITHUB_OUTPUT
-          "up-to-date=$($upToDate.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
+          "branch=$($target.Branch)" >> $env:GITHUB_OUTPUT
+          "bundled-version=$($target.BundledVersion)" >> $env:GITHUB_OUTPUT
+          "up-to-date=$($target.UpToDate.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
 
       # The workflow's issue and pull request carry a hidden marker naming the line and version,
       # for example <!-- 7zip-update line=2.x version=26.06 -->. Only open items are considered.
@@ -141,75 +88,13 @@ jobs:
           VERSION: ${{ needs.check-version.outputs.version }}
           LINE: ${{ matrix.line }}
         run: |
-          $PSNativeCommandUseErrorActionPreference = $true
+          $existing = ./.github/scripts/Find-7zipUpdateItem.ps1 -Repository $env:GITHUB_REPOSITORY -Line $env:LINE -Version $env:VERSION
 
-          $markerPattern = "<!--\s*7zip-update\s+line=$([regex]::Escape($env:LINE))\s+version=(?<version>[\d.]+)\s*-->"
-
-          function Find-MarkedItem {
-              param(
-                  [string] $Kind,
-                  [object[]] $Items
-              )
-
-              $found = @($Items | Where-Object { $_.body -match $markerPattern })
-
-              if ($found.Count -gt 1) {
-                  throw "Found $($found.Count) open $($Kind)s for $env:LINE (#$($found.number -join ', #')). Close all but one, then run the workflow again."
-              }
-
-              if ($found.Count -eq 0) {
-                  Write-Host "There is no open $Kind for $env:LINE."
-                  return $null
-              }
-
-              $null = $found[0].body -match $markerPattern
-              $item = [pscustomobject] @{
-                  Number  = $found[0].number
-                  Version = $Matches.version
-                  Base    = $found[0].base
-              }
-
-              Write-Host "Found the open $Kind #$($item.Number) for $env:LINE, naming 7-Zip Version $($item.Version)."
-              return $item
-          }
-
-          function Get-Action {
-              param(
-                  [object] $Item
-              )
-
-              if (-not $Item) {
-                  return 'create'
-              }
-
-              if ([version] $Item.Version -eq [version] $env:VERSION) {
-                  return 'none'
-              }
-
-              return 'update'
-          }
-
-          $issues = gh api --paginate "repos/$env:GITHUB_REPOSITORY/issues?state=open&per_page=100" --jq '.[] | select(.pull_request == null) | {number, body}' | ForEach-Object { $_ | ConvertFrom-Json }
-          $pullRequests = gh api --paginate "repos/$env:GITHUB_REPOSITORY/pulls?state=open&per_page=100" --jq '.[] | {number, body, base: .base.ref}' | ForEach-Object { $_ | ConvertFrom-Json }
-
-          $issue = Find-MarkedItem -Kind 'issue' -Items $issues
-          $pullRequest = Find-MarkedItem -Kind 'pull request' -Items $pullRequests
-
-          $issueAction = Get-Action -Item $issue
-          $pullRequestAction = Get-Action -Item $pullRequest
-          $nothingToDo = $issueAction -eq 'none' -and $pullRequestAction -eq 'none'
-
-          if ($nothingToDo) {
-              Write-Host "The open issue and pull request already name 7-Zip Version $env:VERSION, so nothing more is needed for $env:LINE."
-          } else {
-              Write-Host "Issue: $issueAction. Pull request: $pullRequestAction."
-          }
-
-          "issue-number=$($issue.Number)" >> $env:GITHUB_OUTPUT
-          "issue-version=$($issue.Version)" >> $env:GITHUB_OUTPUT
-          "issue-action=$issueAction" >> $env:GITHUB_OUTPUT
-          "pr-number=$($pullRequest.Number)" >> $env:GITHUB_OUTPUT
-          "pr-version=$($pullRequest.Version)" >> $env:GITHUB_OUTPUT
-          "pr-base=$($pullRequest.Base)" >> $env:GITHUB_OUTPUT
-          "pr-action=$pullRequestAction" >> $env:GITHUB_OUTPUT
-          "nothing-to-do=$($nothingToDo.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
+          "issue-number=$($existing.IssueNumber)" >> $env:GITHUB_OUTPUT
+          "issue-version=$($existing.IssueVersion)" >> $env:GITHUB_OUTPUT
+          "issue-action=$($existing.IssueAction)" >> $env:GITHUB_OUTPUT
+          "pr-number=$($existing.PullRequestNumber)" >> $env:GITHUB_OUTPUT
+          "pr-version=$($existing.PullRequestVersion)" >> $env:GITHUB_OUTPUT
+          "pr-base=$($existing.PullRequestBase)" >> $env:GITHUB_OUTPUT
+          "pr-action=$($existing.PullRequestAction)" >> $env:GITHUB_OUTPUT
+          "nothing-to-do=$($existing.NothingToDo.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
