@@ -190,3 +190,38 @@ jobs:
 
           "commit=$($commit.Commit)" >> $env:GITHUB_OUTPUT
           "subject=$($commit.Subject)" >> $env:GITHUB_OUTPUT
+
+      # Force-pushes update-7zip-<line> (it is rebuilt every time), then creates the pull request
+      # into the target branch, or moves the open one to the new version and target branch.
+      - name: Push and create or update the pull request for ${{ matrix.line }}
+        id: pr
+        if: steps.commit.outputs.commit != ''
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.UPDATE_7ZIP_TOKEN }}
+          VERSION: ${{ needs.check-version.outputs.version }}
+          LINE: ${{ matrix.line }}
+          TARGET_BRANCH: ${{ steps.target.outputs.branch }}
+          ISSUE_NUMBER: ${{ steps.issue.outputs.number }}
+          PR_ACTION: ${{ steps.existing.outputs.pr-action }}
+          PR_NUMBER: ${{ steps.existing.outputs.pr-number }}
+          PR_VERSION: ${{ steps.existing.outputs.pr-version }}
+        run: |
+          $arguments = @{
+              Repository   = $env:GITHUB_REPOSITORY
+              Path         = 'target'
+              Line         = $env:LINE
+              TargetBranch = $env:TARGET_BRANCH
+              IssueNumber  = $env:ISSUE_NUMBER
+              Version      = $env:VERSION
+          }
+
+          if ($env:PR_ACTION -eq 'update') {
+              $arguments.PullRequestNumber = $env:PR_NUMBER
+              $arguments.PreviousVersion = $env:PR_VERSION
+          }
+
+          $pullRequest = ./.github/scripts/Set-7zipUpdatePullRequest.ps1 @arguments
+
+          "number=$($pullRequest.Number)" >> $env:GITHUB_OUTPUT
+          "action=$($pullRequest.Action)" >> $env:GITHUB_OUTPUT
