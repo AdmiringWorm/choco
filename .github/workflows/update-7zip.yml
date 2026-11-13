@@ -98,3 +98,46 @@ jobs:
           "pr-base=$($existing.PullRequestBase)" >> $env:GITHUB_OUTPUT
           "pr-action=$($existing.PullRequestAction)" >> $env:GITHUB_OUTPUT
           "nothing-to-do=$($existing.NothingToDo.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
+
+      # Creates the issue, or moves an open one to the new version. When the open issue already
+      # names the new version, it is left alone and only its number is passed on.
+      - name: Create or update the issue for ${{ matrix.line }}
+        id: issue
+        if: steps.target.outputs.up-to-date == 'false' && steps.existing.outputs.nothing-to-do == 'false'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.UPDATE_7ZIP_TOKEN }}
+          VERSION: ${{ needs.check-version.outputs.version }}
+          LINE: ${{ matrix.line }}
+          TARGET_BRANCH: ${{ steps.target.outputs.branch }}
+          BUNDLED_VERSION: ${{ steps.target.outputs.bundled-version }}
+          ISSUE_ACTION: ${{ steps.existing.outputs.issue-action }}
+          ISSUE_NUMBER: ${{ steps.existing.outputs.issue-number }}
+          ISSUE_VERSION: ${{ steps.existing.outputs.issue-version }}
+        run: |
+          if ($env:ISSUE_ACTION -eq 'none') {
+              Write-Host "Issue #$env:ISSUE_NUMBER already names 7-Zip Version $env:VERSION."
+              "number=$env:ISSUE_NUMBER" >> $env:GITHUB_OUTPUT
+              return
+          }
+
+          if (-not $env:GH_TOKEN) {
+              throw 'The UPDATE_7ZIP_TOKEN secret is not set, so the issue cannot be created or updated.'
+          }
+
+          $arguments = @{
+              Repository     = $env:GITHUB_REPOSITORY
+              Line           = $env:LINE
+              TargetBranch   = $env:TARGET_BRANCH
+              BundledVersion = $env:BUNDLED_VERSION
+              Version        = $env:VERSION
+          }
+
+          if ($env:ISSUE_ACTION -eq 'update') {
+              $arguments.IssueNumber = $env:ISSUE_NUMBER
+              $arguments.PreviousVersion = $env:ISSUE_VERSION
+          }
+
+          $issue = ./.github/scripts/Set-7zipUpdateIssue.ps1 @arguments
+
+          "number=$($issue.Number)" >> $env:GITHUB_OUTPUT
