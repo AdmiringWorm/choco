@@ -1,0 +1,53 @@
+name: Update 7-Zip
+
+on:
+  # Every day at 06:00 UTC
+  schedule:
+    - cron: '0 6 * * *'
+
+  # Allows you to run this workflow manually from the Actions tab
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  # Find the latest 7-Zip release, and whether the branch the workflow runs on already bundles it.
+  # A scheduled run uses the default branch; a manual run uses the branch it was started from.
+  check-version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.check.outputs.version }}
+      update-needed: ${{ steps.check.outputs.update-needed }}
+    steps:
+      - name: Compare the latest 7-Zip release with the current branch
+        id: check
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BRANCH: ${{ github.ref_name }}
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+
+          $latestVersion = gh api repos/ip7z/7zip/releases/latest --jq '.tag_name'
+          Write-Host "The latest 7-Zip release on GitHub is Version $latestVersion."
+
+          $testFile = (gh api --header 'Accept: application/vnd.github.raw' "repos/$env:GITHUB_REPOSITORY/contents/tests/pester-tests/BundledApplications.Tests.ps1?ref=$env:BRANCH") -join "`n"
+
+          if ($testFile -notmatch "Name\s*=\s*'7z'\s*;\s*Version\s*=\s*'(?<bundled>[^']*)'") {
+              throw "Unable to find the 7-Zip version in BundledApplications.Tests.ps1 on the '$env:BRANCH' branch."
+          }
+
+          $bundledVersion = $Matches.bundled
+          Write-Host "The '$env:BRANCH' branch bundles 7-Zip Version $bundledVersion."
+
+          $updateNeeded = [version] $latestVersion -gt [version] $bundledVersion
+
+          if ($updateNeeded) {
+              Write-Host "7-Zip Version $latestVersion is newer, so the bundled 7-Zip needs updating."
+          } else {
+              Write-Host "The bundled 7-Zip is up to date."
+          }
+
+          "version=$latestVersion" >> $env:GITHUB_OUTPUT
+          "update-needed=$($updateNeeded.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
