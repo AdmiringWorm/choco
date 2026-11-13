@@ -8,8 +8,17 @@ on:
   # Allows you to run this workflow manually from the Actions tab
   workflow_dispatch:
 
+# The workflow's own token only reads. Every write (issue, branch, pull request) uses the
+# UPDATE_7ZIP_TOKEN secret instead, so pull requests trigger the build and test workflows.
 permissions:
   contents: read
+  issues: read
+  pull-requests: read
+
+# One run at a time, so two runs cannot both create an issue or pull request for the same line
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
 
 # The logic lives in .github/scripts, so it can also be run by hand. Each step runs a script and
 # turns the object it returns into step outputs.
@@ -17,14 +26,18 @@ jobs:
   # Find the latest 7-Zip release, and whether the branch the workflow runs on already bundles it.
   # A scheduled run uses the default branch; a manual run uses the branch it was started from.
   # Runs from the 1.x branches (support/1.x, hotfix/1* and release/1*) are refused.
+  # The schedule only runs on chocolatey/choco, so a fork never gets issues, branches or pull
+  # requests it did not ask for. A manual run works in any repository, and only ever writes to
+  # the repository it runs on (GITHUB_REPOSITORY and its own checkout).
   check-version:
+    if: github.event_name != 'schedule' || github.repository == 'chocolatey/choco'
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.check.outputs.version }}
       update-needed: ${{ steps.check.outputs.update-needed }}
     steps:
       - name: Check out the workflow scripts
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           sparse-checkout: .github/scripts
 
@@ -56,7 +69,7 @@ jobs:
             fallback-branch: ${{ github.ref_name }}
     steps:
       - name: Check out the workflow scripts
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           sparse-checkout: .github/scripts
 
@@ -152,7 +165,7 @@ jobs:
       # Checked out with the update token, so the push in a later step is made by its account
       - name: Check out the target branch for ${{ matrix.line }}
         if: steps.target.outputs.up-to-date == 'false' && steps.existing.outputs.pr-action != 'none'
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           ref: ${{ steps.target.outputs.branch }}
           path: target
